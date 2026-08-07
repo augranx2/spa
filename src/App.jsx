@@ -419,6 +419,59 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
   );
 }
 
+/* ========================================================================= TABEL NILAI PER PARAMETER (mirip tampilan "per kelas" EM Viable) */
+const STATUS_BADGE_CLASS = {
+  0: "bg-slate-100 text-slate-500",
+  1: "bg-emerald-50 text-emerald-700",
+  2: "bg-amber-50 text-amber-700",
+  3: "bg-orange-50 text-orange-700",
+  4: "bg-red-50 text-red-700",
+};
+
+function ParamValueTable({ entries, paramKey, jenis }) {
+  const meta = PARAM_META[paramKey];
+  const rows = entries.filter((e) => e[paramKey] !== null && e[paramKey] !== undefined && e[paramKey] !== "");
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="avoid-break overflow-hidden rounded-lg border border-slate-200">
+      <div className="flex items-center justify-between bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-4 py-2.5">
+        <h4 className="text-sm font-bold uppercase tracking-wide text-white">{meta.label}</h4>
+        <span className="text-xs font-medium text-teal-200">{rows.length} titik data</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <th className="whitespace-nowrap px-4 py-2">Titik Sampling</th>
+              <th className="whitespace-nowrap px-4 py-2">Nama Ruangan</th>
+              <th className="whitespace-nowrap px-4 py-2">Tanggal</th>
+              <th className="whitespace-nowrap px-4 py-2">Nilai</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((e) => {
+              const st = statusFor(e[paramKey], paramKey, jenis);
+              return (
+                <tr key={e.id} className="border-b border-slate-100 last:border-0">
+                  <td className="whitespace-nowrap px-4 py-2.5 font-medium text-slate-700">{e.titikSampling || "-"}</td>
+                  <td className="px-4 py-2.5 text-slate-500">{e.namaRuangan || "-"}</td>
+                  <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{isoToID(e.tanggal)}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-semibold ${STATUS_BADGE_CLASS[st.level] || STATUS_BADGE_CLASS[0]}`}>
+                      {displayValue(e[paramKey])}{meta.unit ? ` ${meta.unit}` : ""}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /* ========================================================================= INPUT DATA (EntryEditor) */
 function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, onDelete }) {
   const isCustom = entry._custom || !masterPoints.some((p) => p.code === entry.titikSampling);
@@ -1612,7 +1665,8 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       <div className="mb-5 space-y-4">
         {params.map((p) => (
           <div key={p} className="overflow-hidden rounded-xl border border-slate-200 bg-white print-card">
-            {!getLimit(p, system.jenis).qualitative && <div className="p-4"><ParamChart entries={entries} paramKey={p} systemLabel={system.label} jenis={system.jenis} /></div>}
+            <div className="p-4"><ParamValueTable entries={entries} paramKey={p} jenis={system.jenis} /></div>
+            {!getLimit(p, system.jenis).qualitative && <div className="px-4 pb-4"><ParamChart entries={entries} paramKey={p} systemLabel={system.label} jenis={system.jenis} /></div>}
             <div className="border-t border-slate-100 p-4 avoid-break">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Hasil &amp; Tren {PARAM_META[p].short}
