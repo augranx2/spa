@@ -604,7 +604,7 @@ function Dashboard({ monthKey, setMonthKey, statusIndex, loadingStatus, statusEr
   const tmsCount = SYSTEMS.filter((s) => (statusIndex[s.key]?.level || 0) >= 4).length;
   return (
     <div>
-      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-teal-900">
+      <div className="bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800">
         <div className="mx-auto max-w-5xl px-6 py-6">
           <p className="text-xs font-semibold uppercase tracking-wider text-teal-300">PT. Rama Emerald Multi Sukses — QA</p>
           <h1 className="text-2xl font-bold text-white">Dashboard SPA — Sistem Pengolahan Air</h1>
@@ -652,9 +652,9 @@ function Dashboard({ monthKey, setMonthKey, statusIndex, loadingStatus, statusEr
             const st = statusIndex[s.key];
             return (
               <button key={s.key} onClick={() => onOpen(s.key)}
-                className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-blue-300 hover:shadow-sm">
+                className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-teal-300 hover:shadow-sm">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700"><Droplet size={19} /></span>
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50 text-teal-700"><Droplet size={19} /></span>
                   <div>
                     <p className="font-semibold text-slate-800">{s.label}</p>
                     <p className="text-xs text-slate-400">{loadingStatus ? "Memuat..." : st?.hasData ? "Ada data periode ini" : "Belum ada data periode ini"}</p>
@@ -813,7 +813,7 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
         <p className="py-10 text-center text-sm text-slate-400">Belum ada data pengujian untuk periode ini. Isi dulu di halaman Input Data.</p>
       ) : (
         <div className="overflow-hidden rounded-xl border border-slate-300 print-card">
-          <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-teal-900 px-5 py-4">
+          <div className="bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-5 py-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
                 <img src="/logo-rama.png" alt="Logo PT. Rama Emerald Multi Sukses" className="h-12 w-12 shrink-0 object-contain brightness-0 invert" />
@@ -1499,7 +1499,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       </div>
 
       <div className="mb-5 overflow-hidden rounded-xl border border-slate-200 print-card">
-        <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-teal-900 px-5 py-4">
+        <div className="bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-5 py-4">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
             <div className="flex items-start gap-3">
               <img src="/logo-rama.png" alt="Logo PT. Rama Emerald Multi Sukses" className="h-12 w-12 shrink-0 object-contain brightness-0 invert" />
@@ -1523,7 +1523,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       {saveError && <p className="no-print mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{saveError}</p>}
 
       {!session && (
-        <div className="no-print mb-4 rounded-lg bg-blue-50 px-4 py-2.5 text-sm text-blue-700">
+        <div className="no-print mb-4 rounded-lg bg-teal-50 px-4 py-2.5 text-sm text-teal-700">
           Anda melihat mode publik (lihat saja). Login sebagai Staff/Supervisor/Manager untuk mengisi atau menyetujui data.
         </div>
       )}
@@ -1718,7 +1718,7 @@ function LoginModal({ onClose, onLogin }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center gap-2">
-          <Lock size={18} className="text-blue-700" />
+          <Lock size={18} className="text-teal-700" />
           <h3 className="text-base font-bold text-slate-800">Login SPA</h3>
         </div>
         <form onSubmit={submit}>
@@ -1779,7 +1779,7 @@ function ChangePasswordModal({ token, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center gap-2">
-          <Lock size={18} className="text-blue-700" />
+          <Lock size={18} className="text-teal-700" />
           <h3 className="text-base font-bold text-slate-800">Ganti Password</h3>
         </div>
         {success ? (
