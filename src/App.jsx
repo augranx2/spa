@@ -271,7 +271,7 @@ function DateInputID({ value, onChange, disabled, className }) {
                   type="button"
                   key={i}
                   onClick={() => pickDay(d)}
-                  className={`rounded py-1 hover:bg-blue-50 ${isSelected ? "bg-blue-600 text-white hover:bg-blue-600" : "text-slate-600"}`}
+                  className={`rounded py-1 hover:bg-teal-50 ${isSelected ? "bg-teal-600 text-white hover:bg-teal-600" : "text-slate-600"}`}
                 >
                   {d}
                 </button>
@@ -506,7 +506,7 @@ function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving
             <button onClick={addRow} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
               <Plus size={14} /> Tambah Baris
             </button>
-            <button onClick={onSave} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-60">
+            <button onClick={onSave} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
               {saving ? <Loader2 size={14} className="animate-spin" /> : null} Simpan Data Periode Ini
             </button>
           </div>
@@ -1187,7 +1187,7 @@ function KontrolMingguanPanel({ systemKey, jenis, monthKey, entries, records, ca
         </div>
         {canInput && (
           <button onClick={handleSaveAll} disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
             {saving ? <Loader2 size={14} className="animate-spin" /> : null} Simpan Kontrol Mingguan
           </button>
         )}
@@ -1215,7 +1215,7 @@ function KontrolMingguanPanel({ systemKey, jenis, monthKey, entries, records, ca
             </tr>
           </thead>
           <tbody>
-            <tr className="border-b border-slate-100 bg-blue-50/40">
+            <tr className="border-b border-slate-100 bg-teal-50/40">
               <td className="px-3 py-2 font-medium">Default — seluruh bulan ini<br /><span className="font-normal text-xs text-slate-400">(khusus fasilitas ini)</span></td>
               {renderFieldInputs(defaultRow, updateDefault)}
               <td className="px-3 py-2"></td>
@@ -1605,7 +1605,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
 
       <div className="mb-5 rounded-xl border border-slate-200 bg-white p-5 print-card">
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Pendahuluan</label>
-        <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none"
+        <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none"
           rows={4} value={narrative.pendahuluan} onChange={(ev) => setNarrative({ ...narrative, pendahuluan: ev.target.value })} readOnly={!canEditQA} />
       </div>
 
@@ -1618,7 +1618,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
                 Hasil &amp; Tren {PARAM_META[p].short}
               </label>
               <AutoTextarea
-                className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
                 rows={6}
                 value={narrative.perParameter[p] || ""}
                 placeholder={`Tulis ulasan hasil dan tren untuk ${PARAM_META[p].short}...`}
@@ -1633,7 +1633,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       {(narrative.reviewTren || canEditQA) && (
         <div className="mb-5 rounded-xl border border-slate-200 bg-white p-5 print-card">
           <h3 className="mb-3 text-sm font-bold text-slate-700">Review Tren (dibanding periode sebelumnya)</h3>
-          <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none"
+          <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none"
             rows={6} placeholder="Opsional — isi kalau ada data periode sebelumnya untuk dibandingkan."
             value={narrative.reviewTren} onChange={(ev) => setNarrative({ ...narrative, reviewTren: ev.target.value })} readOnly={!canEditQA} />
         </div>
@@ -1641,7 +1641,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
 
       <div className="mb-5 rounded-xl border border-slate-200 bg-white p-5 print-card">
         <h3 className="mb-3 text-sm font-bold text-slate-700">Kesimpulan</h3>
-        <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-blue-400 focus:outline-none"
+        <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none"
           rows={8} value={narrative.kesimpulan} onChange={(ev) => setNarrative({ ...narrative, kesimpulan: ev.target.value })} readOnly={!canEditQA} />
       </div>
 
@@ -1684,7 +1684,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
 
       {canEditQA && (
         <div className="no-print mb-8 flex justify-end">
-          <button onClick={saveNarrativeOnly} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60">
+          <button onClick={saveNarrativeOnly} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
             {saving ? <Loader2 size={15} className="animate-spin" /> : null} Simpan Narasi &amp; Pembahasan
           </button>
         </div>
@@ -1724,17 +1724,17 @@ function LoginModal({ onClose, onLogin }) {
         <form onSubmit={submit}>
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Username</label>
           <input autoFocus type="text" value={username} onChange={(ev) => setUsername(ev.target.value)}
-            className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none" />
+            className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Password</label>
           <input type="password" value={password} onChange={(ev) => setPassword(ev.target.value)}
-            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none" />
+            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
           {error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
               Batal
             </button>
             <button type="submit" disabled={submitting || !username || !password}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60">
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
               {submitting ? <Loader2 size={14} className="animate-spin" /> : null} Masuk
             </button>
           </div>
@@ -1786,7 +1786,7 @@ function ChangePasswordModal({ token, onClose }) {
           <div>
             <p className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Password berhasil diganti.</p>
             <div className="flex justify-end">
-              <button onClick={onClose} className="rounded-lg bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800">
+              <button onClick={onClose} className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800">
                 Tutup
               </button>
             </div>
@@ -1795,13 +1795,13 @@ function ChangePasswordModal({ token, onClose }) {
           <form onSubmit={submit}>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Password Lama</label>
             <input autoFocus type="password" value={oldPassword} onChange={(ev) => setOldPassword(ev.target.value)}
-              className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none" />
+              className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Password Baru</label>
             <input type="password" value={newPassword} onChange={(ev) => setNewPassword(ev.target.value)}
-              className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none" />
+              className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Ulangi Password Baru</label>
             <input type="password" value={confirmPassword} onChange={(ev) => setConfirmPassword(ev.target.value)}
-              className="mb-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none" />
+              className="mb-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
             <p className="mb-4 text-xs text-slate-400">Minimal 6 karakter. Lupa password lama? Hubungi Administrator, bukan lewat form ini.</p>
             {error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
             <div className="flex justify-end gap-2">
@@ -1809,7 +1809,7 @@ function ChangePasswordModal({ token, onClose }) {
                 Batal
               </button>
               <button type="submit" disabled={submitting || !oldPassword || !newPassword || !confirmPassword}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60">
+                className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : null} Simpan Password Baru
               </button>
             </div>
@@ -1849,7 +1849,7 @@ function TopBar({ session, onLoginClick, onLogout, onChangePasswordClick, view, 
               </button>
             </div>
           ) : (
-            <button onClick={onLoginClick} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800">
+            <button onClick={onLoginClick} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800">
               <LogIn size={14} /> Login
             </button>
           )}
