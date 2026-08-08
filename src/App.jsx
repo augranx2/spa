@@ -834,6 +834,19 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
   ];
   const totalWeight = colWeights.reduce((s, w) => s + w, 0);
 
+  if (!session) {
+    return (
+      <div className="mx-auto max-w-md p-6 pt-20 text-center">
+        <Lock size={28} className="mx-auto mb-3 text-slate-300" />
+        <h2 className="mb-1 text-base font-bold text-slate-700">Perlu Login</h2>
+        <p className="mb-4 text-sm text-slate-500">Formulir Pemeriksaan QC hanya bisa dilihat oleh akun yang sudah login.</p>
+        <button onClick={onBack} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+          <ChevronLeft size={16} /> Kembali ke Pengkajian SPA
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl p-6 print:max-w-none print:p-0">
       <style>{`
@@ -1314,13 +1327,10 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   const system = SYSTEMS.find((s) => s.key === systemKey);
   const params = PARAMS_BY_JENIS[system.jenis] || [];
 
-  const canInputQC = hasAccess(session, "Staff", "QC") || hasAccess(session, "Supervisor", "QA");
-  const canDeleteQC = hasAccess(session, "Supervisor", "QC") || hasAccess(session, "Supervisor", "QA");
-  const canEditQA = hasAccess(session, "Supervisor", "QA");
-  const canApproveFinal = hasAccess(session, "Manager", "QA");
   const isAdmin = session?.role === "Administrator";
-  const isQA = isAdmin || session?.departemen === "QA";
-  const isQC = isAdmin || session?.departemen === "QC";
+  const isTamu = session?.role === "Tamu";
+  const isQA = isAdmin || (!isTamu && session?.departemen === "QA");
+  const isQC = isAdmin || (!isTamu && session?.departemen === "QC");
   const [mode, setMode] = useState("pengkajian"); // 'pengkajian' | 'reportHasil'
 
   const [loading, setLoading] = useState(true);
@@ -1337,6 +1347,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   const [kontrolRecords, setKontrolRecords] = useState([]);
   const [kontrolSaving, setKontrolSaving] = useState(false);
   const [kontrolError, setKontrolError] = useState("");
+  const [reportHasilMeta, setReportHasilMeta] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1344,16 +1355,18 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       setLoading(true);
       setLoadError("");
       try {
-        const [ent, rep, pts, kontrol] = await Promise.all([
+        const [ent, rep, pts, kontrol, rh] = await Promise.all([
           fetchEntries(systemKey, monthKey),
           fetchReport(systemKey, monthKey),
           fetchMaster(systemKey),
           fetchKontrolMingguan().catch(() => []),
+          fetchReportHasil(systemKey, monthKey).catch(() => null),
         ]);
         if (cancelled) return;
         setEntries(ent.map((e) => ({ ...e, id: e.id || uid() })));
         setMasterPoints(pts);
         setKontrolRecords(kontrol);
+        setReportHasilMeta(rh);
         if (rep.found) {
           setNarrative({ ...emptyNarrative(), ...rep.narrative });
           setSignoff(rep.signoff || emptySignoff());
@@ -1370,6 +1383,27 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     load();
     return () => { cancelled = true; };
   }, [systemKey, monthKey]);
+
+  // Formulir QC (Report_Hasil) sudah final di-acc Supervisor/Manager QC?
+  const qcFinalApproved = !!reportHasilMeta?.diperiksa?.nama;
+  // Pengkajian (narasi QA) sudah final di-acc Manager QA ("Mengetahui")?
+  // Begitu ini true, seluruh data (entri, kontrol mingguan, formulir QC,
+  // narasi) jadi arsip terkunci — hanya Administrator yang masih bisa ubah/hapus.
+  const pengkajianFinalized = !!signoff?.diperiksa?.nama;
+  const recordsLocked = !isAdmin && pengkajianFinalized;
+
+  // QC (Staff-Manager QC) & QA (Supervisor/Manager QA, membantu input) boleh
+  // isi/hapus data SELAMA formulir QC belum final di-acc & pengkajian belum
+  // final — begitu salah satu sudah final, data dianggap selesai/terkunci.
+  const canInputQC = isAdmin || (!recordsLocked && !qcFinalApproved && (hasAccess(session, "Staff", "QC") || hasAccess(session, "Supervisor", "QA")));
+  const canDeleteQC = isAdmin || (!recordsLocked && !qcFinalApproved && (hasAccess(session, "Supervisor", "QC") || hasAccess(session, "Supervisor", "QA")));
+  // QA baru boleh mulai menyusun pengkajian SETELAH formulir QC selesai final
+  // di-acc oleh Supervisor/Manager QC (Administrator boleh kapan saja).
+  const canEditQA = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Supervisor", "QA"));
+  const canApproveFinal = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Manager", "QA"));
+  // Tamu (login) & siapa pun yang login boleh lihat pembahasan/pengkajian
+  // lengkap; publik tanpa login hanya boleh lihat data hasil pengujian mentah.
+  const canViewPembahasan = !!session;
 
   const overallLevel = systemOverallLevel(entries, system.jenis);
 
@@ -1526,7 +1560,12 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   if (mode === "reportHasil") {
     return (
       <ReportHasilPanel systemKey={systemKey} entriesForMonth={entries} monthKey={monthKey}
-        session={session} token={token} onBack={() => setMode("pengkajian")} kontrolRecords={kontrolRecords} masterPoints={masterPoints} />
+        session={session} token={token}
+        onBack={() => {
+          setMode("pengkajian");
+          fetchReportHasil(systemKey, monthKey).then(setReportHasilMeta).catch(() => {});
+        }}
+        kontrolRecords={kontrolRecords} masterPoints={masterPoints} />
     );
   }
 
@@ -1538,9 +1577,9 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         </button>
         <div className="flex items-center gap-2">
           <input type="month" value={monthKey} onChange={(ev) => setMonthKey(ev.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm" />
-          {isQC && (
+          {(isQC || isQA) && (
             <button onClick={() => setMode("reportHasil")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              <Printer size={15} /> Report Hasil Pemeriksaan
+              <Printer size={15} /> {isQC ? "Report Hasil Pemeriksaan" : "Lihat Formulir QC"}
             </button>
           )}
           {isQA && (
@@ -1577,14 +1616,29 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
 
       {!session && (
         <div className="no-print mb-4 rounded-lg bg-teal-50 px-4 py-2.5 text-sm text-teal-700">
-          Anda melihat mode publik (lihat saja). Login sebagai Staff/Supervisor/Manager untuk mengisi atau menyetujui data.
+          Anda melihat mode publik — hanya data hasil pengujian mentah. Login untuk melihat grafik, pembahasan, dan pengkajian lengkap.
+        </div>
+      )}
+      {session && recordsLocked && (
+        <div className="no-print mb-4 flex items-center gap-1.5 rounded-lg bg-slate-100 px-4 py-2.5 text-sm text-slate-600">
+          <Lock size={14} /> Pengkajian periode ini sudah final (disetujui) — data terkunci, hanya Administrator yang bisa mengubah/menghapus.
+        </div>
+      )}
+      {session && !recordsLocked && !qcFinalApproved && !isQC && isQA && (
+        <div className="no-print mb-4 flex items-center gap-1.5 rounded-lg bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
+          <Lock size={14} /> Formulir QC belum final disetujui Supervisor/Manager QC — pengkajian baru bisa disusun setelah itu selesai.
         </div>
       )}
 
       <div className="no-print mb-5">
         <EntryEditor system={system} masterPoints={masterPoints} entries={entries} setEntries={setEntries} onSave={saveEntriesOnly} saving={saving}
           canInput={canInputQC} canDeleteExisting={canDeleteQC}
-          accessNote={session ? "Staff/Supervisor/Manager QC atau Supervisor/Manager QA yang bisa mengisi data" : "Login untuk mengisi data"} />
+          accessNote={
+            !session ? "Login untuk mengisi data"
+            : recordsLocked ? "Pengkajian sudah final — data terkunci (hanya Administrator)"
+            : qcFinalApproved ? "Formulir QC sudah final di-acc — data terkunci (hanya Administrator)"
+            : "Staff/Supervisor/Manager QC atau Supervisor/Manager QA yang bisa mengisi data"
+          } />
       </div>
 
       {kontrolError && <p className="no-print mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{kontrolError}</p>}
@@ -1633,6 +1687,8 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         <div className="mt-3"><LegendRow /></div>
       </div>
 
+      {canViewPembahasan ? (
+      <>
       <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-bold text-slate-700">Pembahasan &amp; Narasi</h3>
         {canEditQA ? (
@@ -1650,7 +1706,10 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           </div>
         ) : (
           <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
-            <Lock size={12} /> Hanya Supervisor/Manager QA yang bisa menyusun narasi
+            <Lock size={12} />
+            {recordsLocked ? "Pengkajian sudah final — terkunci"
+              : !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC"
+              : "Hanya Supervisor/Manager QA yang bisa menyusun narasi"}
           </span>
         )}
       </div>
@@ -1704,9 +1763,9 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {[
             { field: "dinilai", label: "Dikaji Oleh", canApprove: canEditQA, onApprove: handleApproveDikaji,
-              disabledNote: "Hanya Supervisor/Manager QA yang bisa menyetujui" },
+              disabledNote: !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC" : "Hanya Supervisor/Manager QA yang bisa menyetujui" },
             { field: "diperiksa", label: "Mengetahui", canApprove: canApproveFinal, onApprove: handleApproveMengetahui,
-              disabledNote: signoff.dinilai?.nama ? "Hanya Manager QA yang bisa menyetujui final" : "Menunggu approval \"Dikaji Oleh\" terlebih dahulu" },
+              disabledNote: !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC" : signoff.dinilai?.nama ? "Hanya Manager QA yang bisa menyetujui final" : "Menunggu approval \"Dikaji Oleh\" terlebih dahulu" },
           ].map(({ field, label, canApprove, onApprove, disabledNote }) => (
             <div key={field} className="rounded-lg border border-slate-200 p-3">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
@@ -1741,6 +1800,13 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           <button onClick={saveNarrativeOnly} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
             {saving ? <Loader2 size={15} className="animate-spin" /> : null} Simpan Narasi &amp; Pembahasan
           </button>
+        </div>
+      )}
+      </>
+      ) : (
+        <div className="mb-8 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+          <Lock size={22} className="mx-auto mb-2 text-slate-300" />
+          <p className="text-sm text-slate-500">Grafik, pembahasan, dan pengkajian lengkap hanya bisa dilihat oleh akun yang sudah login.</p>
         </div>
       )}
     </div>
