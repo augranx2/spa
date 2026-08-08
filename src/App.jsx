@@ -430,6 +430,7 @@ const STATUS_BADGE_CLASS = {
 
 function ParamValueTable({ entries, paramKey, jenis }) {
   const meta = PARAM_META[paramKey];
+  const qualitative = getLimit(paramKey, jenis).qualitative;
   const rows = entries.filter((e) => e[paramKey] !== null && e[paramKey] !== undefined && e[paramKey] !== "");
   if (rows.length === 0) return null;
 
@@ -459,7 +460,7 @@ function ParamValueTable({ entries, paramKey, jenis }) {
                   <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{isoToID(e.tanggal)}</td>
                   <td className="px-4 py-2.5">
                     <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-semibold ${STATUS_BADGE_CLASS[st.level] || STATUS_BADGE_CLASS[0]}`}>
-                      {displayValue(e[paramKey])}{meta.unit ? ` ${meta.unit}` : ""}
+                      {displayValue(e[paramKey])}{!qualitative && meta.unit ? ` ${meta.unit}` : ""}
                     </span>
                   </td>
                 </tr>
@@ -847,8 +848,11 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
     );
   }
 
+  const canPrint = hasAccess(session, "Staff");
+
   return (
-    <div className="mx-auto max-w-6xl p-6 print:max-w-none print:p-0">
+    <div className="mx-auto max-w-6xl p-6 print:max-w-none print:p-0" data-print-blocked={!canPrint}>
+      <div className="print-blocked-notice">Akses print/download PDF dibatasi untuk akun Staff/Supervisor/Manager ke atas. Silakan login dengan akun yang sesuai.</div>
       <style>{`
         @media print {
           @page { size: A4 landscape; margin: 1cm; }
@@ -866,9 +870,11 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
         <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-700">
           <ChevronLeft size={16} /> Kembali ke Pengkajian SPA
         </button>
-        <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-900">
-          <Printer size={15} /> Cetak / Download PDF
-        </button>
+        {canPrint && (
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-900">
+            <Printer size={15} /> Cetak / Download PDF
+          </button>
+        )}
       </div>
 
       {errorMsg && <p className="no-print mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{errorMsg}</p>}
@@ -1404,6 +1410,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   // Tamu (login) & siapa pun yang login boleh lihat pembahasan/pengkajian
   // lengkap; publik tanpa login hanya boleh lihat data hasil pengujian mentah.
   const canViewPembahasan = !!session;
+  const canPrint = hasAccess(session, "Staff");
 
   const overallLevel = systemOverallLevel(entries, system.jenis);
 
@@ -1570,7 +1577,8 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   }
 
   return (
-    <div className="mx-auto max-w-5xl p-6 print:max-w-none print:p-0">
+    <div className="mx-auto max-w-5xl p-6 print:max-w-none print:p-0" data-print-blocked={!canPrint}>
+      <div className="print-blocked-notice">Akses print/download PDF dibatasi untuk akun Staff/Supervisor/Manager ke atas. Silakan login dengan akun yang sesuai.</div>
       <div className="no-print mb-4 flex items-center justify-between">
         <button onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
           <ChevronLeft size={16} /> Kembali ke Dashboard
@@ -1582,7 +1590,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
               <Printer size={15} /> {isQC ? "Report Hasil Pemeriksaan" : "Lihat Formulir QC"}
             </button>
           )}
-          {isQA && (
+          {isQA && canPrint && (
             <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
               <Printer size={15} /> Download / Print PDF
             </button>
@@ -2174,6 +2182,24 @@ export default function App() {
     if (view === "dashboard") refreshStatus(monthKey);
   }, [view, monthKey, refreshStatus]);
 
+  // Blokir shortcut cetak (Ctrl+P / Cmd+P) untuk publik (belum login) & role
+  // Tamu — cadangan tambahan di atas aturan CSS @media print (yang menyensor
+  // isi cetakan apa pun caranya, termasuk lewat menu/File > Print browser).
+  useEffect(() => {
+    const canPrint = hasAccess(session, "Staff");
+    if (canPrint) return;
+    function blockPrintShortcut(ev) {
+      const isPrintCombo = (ev.ctrlKey || ev.metaKey) && (ev.key === "p" || ev.key === "P");
+      if (isPrintCombo) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        window.alert("Print/Download PDF hanya untuk akun Staff/Supervisor/Manager ke atas. Silakan login dengan akun yang sesuai.");
+      }
+    }
+    window.addEventListener("keydown", blockPrintShortcut, true);
+    return () => window.removeEventListener("keydown", blockPrintShortcut, true);
+  }, [session]);
+
   useEffect(() => {
     if (view === "activity" && !(session && hasAccess(session, "Supervisor"))) {
       setView("dashboard");
@@ -2188,6 +2214,7 @@ export default function App() {
     <div className="min-h-full bg-slate-50">
       <style>{`
         .only-print { display: none; }
+        .print-blocked-notice { display: none; }
         * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         @media print {
           .no-print { display: none !important; }
@@ -2195,6 +2222,11 @@ export default function App() {
           .only-print { display: block !important; }
           .print-card { box-shadow: none !important; border: 1px solid #cbd5e1 !important; page-break-inside: avoid; break-inside: avoid; }
           .avoid-break { page-break-inside: avoid; break-inside: avoid; }
+          [data-print-blocked="true"] > *:not(.print-blocked-notice) { display: none !important; }
+          [data-print-blocked="true"] .print-blocked-notice {
+            display: block !important; padding: 5rem 2rem; text-align: center;
+            font-size: 15px; font-weight: 700; color: #334155;
+          }
         }
         @page {
           margin: 1.5cm 1.5cm 2cm 1.5cm;
