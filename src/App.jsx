@@ -2056,7 +2056,7 @@ function ChangePasswordModal({ token, onClose }) {
 }
 
 /* ========================================================================= TOP BAR */
-function ProfileModal({ session, onClose, onLogout, onChangePasswordClick }) {
+function ProfileModal({ session, onClose, onChangePasswordClick }) {
   const rows = [
     { label: "Username", value: session.username },
     { label: "Nama Lengkap", value: session.nama },
@@ -2078,19 +2078,14 @@ function ProfileModal({ session, onClose, onLogout, onChangePasswordClick }) {
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50">
-            <LogOut size={14} /> Keluar
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            Tutup
           </button>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              Tutup
-            </button>
-            <button onClick={() => { onClose(); onChangePasswordClick(); }}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800">
-              <Lock size={14} /> Ganti Password
-            </button>
-          </div>
+          <button onClick={() => { onClose(); onChangePasswordClick(); }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800">
+            <Lock size={14} /> Ganti Password
+          </button>
         </div>
       </div>
     </div>
@@ -2120,8 +2115,11 @@ function TopBar({ session, onLoginClick, onLogout, onChangePasswordClick, view, 
                 <User size={13} /> {session.nama} · {session.role} {session.departemen}
               </button>
               {showProfile && (
-                <ProfileModal session={session} onClose={() => setShowProfile(false)} onLogout={onLogout} onChangePasswordClick={onChangePasswordClick} />
+                <ProfileModal session={session} onClose={() => setShowProfile(false)} onChangePasswordClick={onChangePasswordClick} />
               )}
+              <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                <LogOut size={14} /> Keluar
+              </button>
             </>
           ) : (
             <button onClick={onLoginClick} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800">
