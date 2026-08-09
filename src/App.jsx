@@ -2056,6 +2056,56 @@ function ChangePasswordModal({ token, onClose }) {
 }
 
 /* ========================================================================= TOP BAR */
+function ProfileMenu({ session, onLogout, onChangePasswordClick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onClickOutside(ev) {
+      if (ref.current && !ref.current.contains(ev.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-teal-700 text-[10px] font-bold text-white">
+          {(session.nama || "?").charAt(0).toUpperCase()}
+        </span>
+        <span className="hidden sm:inline">{session.nama}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 z-40 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+          <div className="border-b border-slate-100 px-3 py-3">
+            <p className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-700 text-sm font-bold text-white">
+              {(session.nama || "?").charAt(0).toUpperCase()}
+            </p>
+          </div>
+          <div className="border-b border-slate-100 px-3 py-3 text-sm">
+            <p className="font-semibold text-slate-800">{session.nama}</p>
+            <p className="text-xs text-slate-400">@{session.username}</p>
+            <div className="mt-2 space-y-1 text-xs text-slate-500">
+              <p><span className="text-slate-400">Jabatan:</span> <span className="font-medium text-slate-700">{session.role}</span></p>
+              <p><span className="text-slate-400">Departemen:</span> <span className="font-medium text-slate-700">{session.departemen}</span></p>
+            </div>
+          </div>
+          <button onClick={() => { setOpen(false); onChangePasswordClick(); }}
+            className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50">
+            <Lock size={14} /> Ganti Password
+          </button>
+          <button onClick={() => { setOpen(false); onLogout(); }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50">
+            <LogOut size={14} /> Keluar
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TopBar({ session, onLoginClick, onLogout, onChangePasswordClick, view, setView }) {
   return (
     <div className="no-print border-b border-slate-200 bg-white px-4 py-2.5">
@@ -2072,17 +2122,7 @@ function TopBar({ session, onLoginClick, onLogout, onChangePasswordClick, view, 
             </button>
           )}
           {session ? (
-            <div className="flex items-center gap-2">
-              <span className="hidden items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 sm:inline-flex">
-                <User size={13} /> {session.nama} · {session.role} {session.departemen}
-              </span>
-              <button onClick={onChangePasswordClick} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                <Lock size={14} /> Ganti Password
-              </button>
-              <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                <LogOut size={14} /> Keluar
-              </button>
-            </div>
+            <ProfileMenu session={session} onLogout={onLogout} onChangePasswordClick={onChangePasswordClick} />
           ) : (
             <button onClick={onLoginClick} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800">
               <LogIn size={14} /> Login
