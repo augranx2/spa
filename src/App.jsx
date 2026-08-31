@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -7,8 +7,9 @@ import {
 } from "recharts";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Printer, Loader2, Sparkles,
-  AlertTriangle, CheckCircle2, XCircle, FileQuestion, LayoutGrid,
-  Droplet, LogIn, LogOut, User, History, Lock, Calendar as CalendarIcon,
+  AlertTriangle, CheckCircle2, XCircle, FileQuestion, LayoutDashboard,
+  Droplet, Flame, Layers, LogIn, LogOut, User, History, Lock, Calendar as CalendarIcon,
+  Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft,
 } from "lucide-react";
 import {
   fetchMaster, fetchEntries, saveEntries as apiSaveEntries,
@@ -19,10 +20,16 @@ import {
   changePassword as apiChangePassword,
   fetchKontrolMingguan, saveKontrolMingguan as apiSaveKontrolMingguan,
 } from "./api.js";
-import { generateLocalNarrative, PARAM_META, PARAMS_BY_JENIS, LIMITS, getLimit, QUALI_OPTIONS, statusFor, parseNumericValue, fullDateID, weekKeyForISO, weekLabel, findKontrolMingguan, monthDefaultWeekKey } from "./narrativeGenerator.js";
+import {
+  generateLocalNarrative, PARAM_META, PARAMS_BY_JENIS, LIMITS, getLimit,
+  QUALI_OPTIONS, statusFor, parseNumericValue, fullDateID, weekKeyForISO,
+  weekLabel, findKontrolMingguan, monthDefaultWeekKey,
+} from "./narrativeGenerator.js";
 import { useAuth, hasAccess } from "./auth.js";
 
-// Sistem air TETAP (harus persis sinkron dengan SYSTEMS di Code.gs)
+/* =========================================================================
+   1. KONFIGURASI SISTEM AIR & GRUP NAVIGASI
+   ========================================================================= */
 const SYSTEMS = [
   { key: "pw_nbl", jenis: "PW", label: "Purified Water — NBL" },
   { key: "pw_sefalosporin", jenis: "PW", label: "Purified Water — Sefalosporin" },
@@ -31,8 +38,24 @@ const SYSTEMS = [
   { key: "ps_sefalosporin_steril", jenis: "Pure Steam", label: "Pure Steam — Sefalosporin Steril" },
 ];
 
-// Penomoran dokumen Formulir QC — beda-beda per sistem/fasilitas (ditampilkan
-// di pojok kanan atas Formulir Pemeriksaan, seperti formulir EM Viable).
+const GROUPS = [
+  {
+    key: "pw",
+    title: "Purified Water (PW)",
+    items: ["pw_nbl", "pw_sefalosporin", "pw_betalaktam"],
+  },
+  {
+    key: "wfi",
+    title: "Water For Injection (WFI)",
+    items: ["wfi_sefalosporin"],
+  },
+  {
+    key: "ps",
+    title: "Pure Steam (PS)",
+    items: ["ps_sefalosporin_steril"],
+  },
+];
+
 const DOC_NUMBERS = {
   pw_nbl: { no: "FM.QC.355/R4", tglBerlaku: "01/02/2024", menggantikanNo: "FM.QC.355/R3", tglBerlakuLama: "05/10/2022" },
   pw_betalaktam: { no: "FM.QC.040/R6", tglBerlaku: "05/10/2022", menggantikanNo: "FM.QC.040/R5", tglBerlakuLama: "01/10/2019" },
@@ -50,8 +73,6 @@ function todayISO() {
   return d.toISOString().slice(0, 10);
 }
 
-// Tambah N hari ke tanggal ISO (yyyy-mm-dd) tanpa masalah timezone/UTC —
-// dipakai untuk menghitung Tanggal Baca (Tanggal Pemeriksaan + 3 hari).
 function addDaysISO(iso, days) {
   if (!iso) return "";
   const [y, m, d] = String(iso).split("-").map(Number);
@@ -85,42 +106,36 @@ function displayValue(raw) {
   if (raw === null || raw === undefined || raw === "") return "-";
   const str = String(raw).trim();
   if (/^<\s*[\d.,]+$/.test(str)) return str.replace(/\s+/g, "").replace(".", ",");
-  // Tampilkan konsisten pakai koma sebagai pemisah desimal (data lama yang
-  // sempat disimpan pakai titik pun ikut tampil rapi dengan koma di sini).
   return str.replace(/\./g, ",");
 }
 
-// Sebagian orang mengetik pemisah desimal pakai titik (.), sebagian pakai
-// koma (,) — supaya data yang tersimpan konsisten (dan tidak salah baca saat
-// direkap/dibandingkan), titik otomatis diubah jadi koma saat disimpan.
-// Notasi "<1" / "<0.5" dst tetap didukung.
 function normalizeNumericInput(str) {
   if (str === "" || str === "-") return str;
   return str.replace(/\./g, ",");
 }
 
-/* ========================================================================= QR VERIFIKASI TANDA TANGAN */
+/* =========================================================================
+   2. QR VERIFIKASI DIGITAL
+   ========================================================================= */
 function buildVerifyUrl(params) {
   const qs = new URLSearchParams(params).toString();
   return `${window.location.origin}/verify?${qs}`;
 }
 
-function VerifyQR({ type, system, period, slot, size = 64 }) {
+function VerifyQR({ type, system, period, slot, size = 52 }) {
   const params = { type, system, month: period, slot };
   const url = buildVerifyUrl(params);
   return (
     <div className="flex flex-col items-center gap-1">
       <QRCodeSVG value={url} size={size} level="M" bgColor="#ffffff" fgColor="#0f172a" />
-      <span className="text-center text-[9px] leading-tight text-slate-400">Scan untuk verifikasi</span>
+      <span className="text-center text-[9px] leading-tight text-slate-400">Scan Verifikasi</span>
     </div>
   );
 }
 
-/* ========================================================================= INPUT TANGGAL FORMAT INDONESIA (dd/mm/yyyy)
-   <input type="date"> menampilkan format sesuai locale OS/browser (kadang
-   mm/dd/yyyy), tidak bisa dipaksa dd/mm/yyyy lewat HTML/CSS saja — jadi kita
-   pakai text input dengan pola dd/mm/yyyy, disimpan sebagai ISO (yyyy-mm-dd)
-   di data seperti biasa. */
+/* =========================================================================
+   3. DATEPICKER CUSTOM INDONESIA
+   ========================================================================= */
 function isoToID(iso) {
   if (!iso) return "";
   const [y, m, d] = String(iso).split("-");
@@ -139,7 +154,7 @@ function idToISO(text) {
 function DateInputID({ value, onChange, disabled, className }) {
   const [text, setText] = useState(isoToID(value));
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState(null); // {top, left} posisi kalender, dihitung dari input (position: fixed)
+  const [pos, setPos] = useState(null);
   const [viewYM, setViewYM] = useState(() => {
     const iso = value || todayISO();
     const [y, m] = iso.split("-");
@@ -150,8 +165,6 @@ function DateInputID({ value, onChange, disabled, className }) {
 
   useEffect(() => { setText(isoToID(value)); }, [value]);
 
-  // Klik di luar input MAUPUN di luar kalender (yang sekarang di-portal ke
-  // body, jadi tidak selalu "di dalam" DOM input) otomatis menutupnya.
   useEffect(() => {
     if (!open) return;
     function onDocClick(ev) {
@@ -160,8 +173,6 @@ function DateInputID({ value, onChange, disabled, className }) {
       setOpen(false);
     }
     document.addEventListener("mousedown", onDocClick);
-    // Tutup juga kalau halaman di-scroll, supaya posisi kalender tidak "nyangkut"
-    // salah tempat relatif terhadap input yang sudah bergeser.
     function onScroll() { setOpen(false); }
     window.addEventListener("scroll", onScroll, true);
     return () => {
@@ -174,13 +185,11 @@ function DateInputID({ value, onChange, disabled, className }) {
     const el = inputRef.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
-    const popW = 224; // w-56
-    const popH = 230; // perkiraan tinggi kalender
+    const popW = 224;
+    const popH = 230;
     let top = rect.bottom + 4;
     let left = rect.left;
-    // Kalau kalender bakal kepotong di bawah layar, buka ke ATAS input.
     if (top + popH > window.innerHeight) top = rect.top - popH - 4;
-    // Kalau kepotong di kanan layar, geser ke kiri secukupnya.
     if (left + popW > window.innerWidth) left = Math.max(4, window.innerWidth - popW - 4);
     return { top, left };
   }
@@ -211,7 +220,7 @@ function DateInputID({ value, onChange, disabled, className }) {
   }
 
   const daysInMonth = new Date(viewYM.y, viewYM.m + 1, 0).getDate();
-  const firstDow = new Date(viewYM.y, viewYM.m, 1).getDay(); // 0=Minggu
+  const firstDow = new Date(viewYM.y, viewYM.m, 1).getDay();
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
@@ -251,12 +260,12 @@ function DateInputID({ value, onChange, disabled, className }) {
       {open && !disabled && pos && createPortal(
         <div
           ref={popRef}
-          className="only-screen fixed z-50 w-56 rounded-lg border border-slate-200 bg-white p-2.5 text-left shadow-lg"
+          className="only-screen fixed z-50 w-56 rounded-xl border border-slate-200 bg-white p-2.5 text-left shadow-2xl"
           style={{ top: pos.top, left: pos.left }}
         >
           <div className="mb-2 flex items-center justify-between">
             <button type="button" onClick={() => shiftMonth(-1)} className="rounded px-1.5 py-0.5 text-slate-500 hover:bg-slate-100">‹</button>
-            <span className="text-xs font-semibold text-slate-700">{MONTHS_ID_FULL[viewYM.m]} {viewYM.y}</span>
+            <span className="text-xs font-bold text-slate-700">{MONTHS_ID_FULL[viewYM.m]} {viewYM.y}</span>
             <button type="button" onClick={() => shiftMonth(1)} className="rounded px-1.5 py-0.5 text-slate-500 hover:bg-slate-100">›</button>
           </div>
           <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] text-slate-400">
@@ -272,7 +281,7 @@ function DateInputID({ value, onChange, disabled, className }) {
                   type="button"
                   key={i}
                   onClick={() => pickDay(d)}
-                  className={`rounded py-1 hover:bg-teal-50 ${isSelected ? "bg-teal-600 text-white hover:bg-teal-600" : "text-slate-600"}`}
+                  className={`rounded-lg py-1 hover:bg-teal-50 ${isSelected ? "bg-teal-700 text-white hover:bg-teal-700 font-bold" : "text-slate-600"}`}
                 >
                   {d}
                 </button>
@@ -286,7 +295,9 @@ function DateInputID({ value, onChange, disabled, className }) {
   );
 }
 
-/* ========================================================================= AUTO-RESIZE TEXTAREA (dengan versi khusus cetak/PDF) */
+/* =========================================================================
+   4. AUTO-RESIZE TEXTAREA
+   ========================================================================= */
 function AutoTextarea({ value, onChange, rows = 3, placeholder, className, readOnly = false }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -318,37 +329,38 @@ function AutoTextarea({ value, onChange, rows = 3, placeholder, className, readO
   );
 }
 
-/* ========================================================================= STATUS PILL */
+/* =========================================================================
+   5. STATUS PILL & GRAFIK TREN RECHARTS
+   ========================================================================= */
 function StatusPill({ level, hasData }) {
   if (!hasData) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold bg-slate-100 text-slate-500">
+      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-semibold bg-slate-100 text-slate-500">
         Belum ada data
       </span>
     );
   }
   if (level >= 4) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "#fee2e2", color: "#b91c1c" }}>
+      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-semibold" style={{ background: "#fee2e2", color: "#b91c1c" }}>
         <AlertTriangle size={13} /> Melebihi Syarat
       </span>
     );
   }
   if (level === 3) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "#ffedd5", color: "#c2410c" }}>
+      <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-semibold" style={{ background: "#ffedd5", color: "#c2410c" }}>
         <AlertTriangle size={13} /> Terkendali (Perlu Perhatian)
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "#dcfce7", color: "#15803d" }}>
+    <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-semibold" style={{ background: "#dcfce7", color: "#15803d" }}>
       <CheckCircle2 size={13} /> Terkendali
     </span>
   );
 }
 
-/* ========================================================================= GRAFIK TREN PER PARAMETER (gaya EM Viable: area gradasi, dot & tooltip berwarna status, legend chip) */
 function statusForChartValue(value, limit) {
   const isBi = limit.syaratMin !== undefined;
   if (isBi) {
@@ -374,7 +386,7 @@ function ChartTooltip({ active, payload, limit, unit }) {
   const p = payload[0].payload;
   const s = statusForChartValue(p.value, limit);
   return (
-    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-xl border border-slate-200 bg-white/95 backdrop-blur-xs px-3 py-2 text-xs shadow-xl">
       <p className="mb-1 max-w-[160px] font-semibold text-slate-600">{p.label}</p>
       <p className="text-sm font-bold" style={{ color: s.color }}>{displayValue(p.value)}{unit ? ` ${unit}` : ""}</p>
       <p className="font-medium" style={{ color: s.color }}>{s.label}</p>
@@ -384,7 +396,7 @@ function ChartTooltip({ active, payload, limit, unit }) {
 
 function LegendChip({ color, label }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+    <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-500 border border-slate-200">
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
       {label}
     </span>
@@ -430,10 +442,10 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
   const gradId = `paramGrad-${jenis}-${paramKey}`.replace(/[^a-zA-Z0-9-]/g, "");
 
   return (
-    <div className="avoid-break overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-b border-slate-100 px-4 py-2.5">
+    <div className="avoid-break overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-b border-slate-100 px-4 py-2.5 bg-slate-50/50">
         <div>
-          <p className="text-xs font-semibold text-slate-600">{meta.label} — {systemLabel}</p>
+          <p className="text-xs font-bold text-slate-700">{meta.label} — {systemLabel}</p>
           <p className="text-[11px] text-slate-400">
             Tertinggi bulan ini: <span className="font-semibold" style={{ color: peakStatus.color }}>{displayValue(peak.value)}{meta.unit ? ` ${meta.unit}` : ""}</span> ({peak.room})
           </p>
@@ -449,8 +461,8 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
         <ComposedChart data={data} margin={{ top: 10, right: 15, left: 10, bottom: 50 }}>
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#16a34a" stopOpacity={0.25} />
-              <stop offset="100%" stopColor="#16a34a" stopOpacity={0} />
+              <stop offset="0%" stopColor="#0d9488" stopOpacity={0.25} />
+              <stop offset="100%" stopColor="#0d9488" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -489,7 +501,7 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
           <Line
             type="monotone"
             dataKey="value"
-            stroke="#16a34a"
+            stroke="#0d9488"
             strokeWidth={2.25}
             dot={<ChartDot limit={limit} />}
             activeDot={{ r: 6, stroke: "#fff", strokeWidth: 2 }}
@@ -497,16 +509,10 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
           />
         </ComposedChart>
       </ResponsiveContainer>
-      {excludedCount > 0 && (
-        <p className="mx-4 mb-3 text-xs italic text-amber-600">
-          * {excludedCount} titik data dengan nilai tidak wajar (di luar skala grafik) tidak ditampilkan di sini — cek nilainya di tabel di atas.
-        </p>
-      )}
     </div>
   );
 }
 
-/* ========================================================================= TABEL NILAI PER PARAMETER (mirip tampilan "per kelas" EM Viable) */
 const STATUS_BADGE_CLASS = {
   0: "bg-slate-100 text-slate-500",
   1: "bg-emerald-50 text-emerald-700",
@@ -522,15 +528,15 @@ function ParamValueTable({ entries, paramKey, jenis }) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="avoid-break overflow-hidden rounded-lg border border-slate-200">
+    <div className="avoid-break overflow-hidden rounded-2xl border border-slate-200">
       <div className="flex items-center justify-between bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-4 py-2.5">
-        <h4 className="text-sm font-bold uppercase tracking-wide text-white">{meta.label}</h4>
+        <h4 className="text-xs font-bold uppercase tracking-wide text-white">{meta.label}</h4>
         <span className="text-xs font-medium text-teal-200">{rows.length} titik data</span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               <th className="whitespace-nowrap px-4 py-2">Titik Sampling</th>
               <th className="whitespace-nowrap px-4 py-2">Nama Ruangan</th>
               <th className="whitespace-nowrap px-4 py-2">Tanggal</th>
@@ -541,12 +547,12 @@ function ParamValueTable({ entries, paramKey, jenis }) {
             {rows.map((e) => {
               const st = statusFor(e[paramKey], paramKey, jenis);
               return (
-                <tr key={e.id} className="border-b border-slate-100 last:border-0">
-                  <td className="whitespace-nowrap px-4 py-2.5 font-medium text-slate-700">{e.titikSampling || "-"}</td>
-                  <td className="px-4 py-2.5 text-slate-500">{e.namaRuangan || "-"}</td>
-                  <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{isoToID(e.tanggal)}</td>
-                  <td className="px-4 py-2.5">
-                    <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-semibold ${STATUS_BADGE_CLASS[st.level] || STATUS_BADGE_CLASS[0]}`}>
+                <tr key={e.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                  <td className="whitespace-nowrap px-4 py-2 font-semibold text-slate-800">{e.titikSampling || "-"}</td>
+                  <td className="px-4 py-2 text-slate-600">{e.namaRuangan || "-"}</td>
+                  <td className="whitespace-nowrap px-4 py-2 text-slate-500">{isoToID(e.tanggal)}</td>
+                  <td className="px-4 py-2">
+                    <span className={`inline-flex rounded-md px-2.5 py-0.5 text-xs font-bold ${STATUS_BADGE_CLASS[st.level] || STATUS_BADGE_CLASS[0]}`}>
                       {displayValue(e[paramKey])}{!qualitative && meta.unit ? ` ${meta.unit}` : ""}
                     </span>
                   </td>
@@ -560,7 +566,9 @@ function ParamValueTable({ entries, paramKey, jenis }) {
   );
 }
 
-/* ========================================================================= INPUT DATA (EntryEditor) */
+/* =========================================================================
+   6. INPUT DATA HARIAN/BULANAN (EntryEditor)
+   ========================================================================= */
 function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, onDelete }) {
   const isCustom = entry._custom || !masterPoints.some((p) => p.code === entry.titikSampling);
   const handlePick = (val) => {
@@ -572,25 +580,25 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
     if (pt) onChange({ ...entry, _custom: false, titikSampling: pt.code, namaRuangan: pt.name });
   };
   return (
-    <tr className="border-b border-slate-100 align-top">
+    <tr className="border-b border-slate-100 align-top hover:bg-slate-50/50">
       <td className="px-2 py-1.5">
-        <DateInputID disabled={readOnly} className="w-28 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50"
+        <DateInputID disabled={readOnly} className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50"
           value={entry.tanggal || ""} onChange={(iso) => onChange({ ...entry, tanggal: iso })} />
       </td>
       <td className="px-2 py-1.5">
-        <select disabled={readOnly} className="w-40 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50"
+        <select disabled={readOnly} className="w-40 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50"
           value={isCustom ? "__custom__" : entry.titikSampling || "__custom__"} onChange={(ev) => handlePick(ev.target.value)}>
           <option value="__custom__">-- Input manual --</option>
           {masterPoints.map((p) => <option key={p.code} value={p.code}>{p.code}{p.name ? ` — ${p.name}` : ""}</option>)}
         </select>
         {isCustom && (
-          <input type="text" disabled={readOnly} className="mt-1 w-40 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50"
+          <input type="text" disabled={readOnly} className="mt-1 w-40 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50"
             placeholder="Kode titik sampling" value={entry.titikSampling || ""}
             onChange={(ev) => onChange({ ...entry, titikSampling: ev.target.value })} />
         )}
       </td>
       <td className="px-2 py-1.5">
-        <input type="text" disabled={readOnly || !isCustom} className="w-36 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50"
+        <input type="text" disabled={readOnly || !isCustom} className="w-36 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50"
           placeholder="Nama ruangan/area" value={entry.namaRuangan || ""}
           onChange={(ev) => onChange({ ...entry, namaRuangan: ev.target.value })} />
       </td>
@@ -599,13 +607,13 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
         return (
           <td key={p} className="px-2 py-1.5">
             {opts ? (
-              <select disabled={readOnly} className="w-32 rounded border border-slate-200 px-2 py-1 text-center text-sm disabled:bg-slate-50"
+              <select disabled={readOnly} className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs disabled:bg-slate-50 font-semibold"
                 value={entry[p] || ""} onChange={(ev) => onChange({ ...entry, [p]: ev.target.value })}>
                 <option value="">-</option>
                 {opts.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             ) : (
-              <input type="text" disabled={readOnly} className="w-20 rounded border border-slate-200 px-2 py-1 text-center text-sm disabled:bg-slate-50"
+              <input type="text" disabled={readOnly} className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs disabled:bg-slate-50 font-semibold"
                 placeholder="-" value={entry[p] === null || entry[p] === undefined ? "" : entry[p]}
                 onChange={(ev) => {
                   const raw = normalizeNumericInput(ev.target.value.trim());
@@ -617,8 +625,8 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
       })}
       <td className="px-2 py-1.5 text-center">
         {canDelete && (
-          <button onClick={onDelete} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500" title="Hapus baris">
-            <Trash2 size={15} />
+          <button onClick={onDelete} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 transition" title="Hapus baris">
+            <Trash2 size={14} />
           </button>
         )}
       </td>
@@ -629,9 +637,6 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
 function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving, canInput = false, canDeleteExisting = false, accessNote }) {
   const params = PARAMS_BY_JENIS[system.jenis] || [];
   const addRow = () => {
-    // Tanggal baris baru ikut tanggal baris paling atas (data terakhir yang
-    // barusan diinput), bukan selalu tanggal hari ini — menghemat waktu saat
-    // input data historis/bulanan dalam jumlah banyak.
     const defaultTanggal = entries[0]?.tanggal || todayISO();
     const blank = { id: uid(), tanggal: defaultTanggal, titikSampling: "", namaRuangan: "" };
     params.forEach((p) => { blank[p] = ""; });
@@ -639,35 +644,35 @@ function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving
   };
   const isExistingRow = (e) => typeof e.id === "string" && e.id.startsWith("row-");
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-700">Input Data Bulanan</h3>
+    <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-xs">
+      <div className="mb-3.5 flex items-center justify-between border-b pb-3">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Entri Data Pengujian</h3>
         {canInput ? (
           <div className="flex gap-2">
-            <button onClick={addRow} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-              <Plus size={14} /> Tambah Baris
+            <button onClick={addRow} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs">
+              <Plus size={14} /> Tambah Titik
             </button>
-            <button onClick={onSave} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
-              {saving ? <Loader2 size={14} className="animate-spin" /> : null} Simpan Data Periode Ini
+            <button onClick={onSave} disabled={saving} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60 shadow-xs">
+              {saving ? <Loader2 size={13} className="animate-spin" /> : null} Simpan Data Pengujian
             </button>
           </div>
         ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
+          <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
             <Lock size={12} /> {accessNote || "Mode lihat saja"}
           </span>
         )}
       </div>
       {entries.length === 0 ? (
-        <p className="py-6 text-center text-sm text-slate-400">
-          {canInput ? 'Belum ada baris. Klik "Tambah Baris" untuk mulai input data titik sampling periode ini.' : "Belum ada data untuk periode ini."}
+        <p className="py-8 text-center text-xs text-slate-400">
+          {canInput ? 'Belum ada baris. Klik "Tambah Titik" untuk mulai mengisi data pengujian periode ini.' : "Belum ada data untuk periode ini."}
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
+              <tr className="border-b border-slate-200 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 <th className="px-2 py-1.5">Tanggal</th><th className="px-2 py-1.5">Titik Sampling</th><th className="px-2 py-1.5">Nama Ruangan</th>
-                {params.map((p) => <th key={p} className="px-2 py-1.5">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>)}
+                {params.map((p) => <th key={p} className="px-2 py-1.5 text-center">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>)}
                 <th className="px-2 py-1.5" />
               </tr>
             </thead>
@@ -683,17 +688,10 @@ function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving
           </table>
         </div>
       )}
-      {canInput && (
-        <p className="mt-2 text-xs text-slate-400">
-          Isi "-" untuk parameter yang tidak diuji. Titik sampling yang sama boleh muncul lebih dari satu kali dengan tanggal berbeda.
-          {!canDeleteExisting && " Baris yang sudah tersimpan tidak bisa dihapus — hubungi Supervisor/Manager QC atau QA untuk menghapus."}
-        </p>
-      )}
     </div>
   );
 }
 
-/* ========================================================================= HELPERS: STATUS & STATS UNTUK AI */
 function systemOverallLevel(entries, jenis) {
   let maxLevel = 0;
   const params = PARAMS_BY_JENIS[jenis] || [];
@@ -739,63 +737,702 @@ function buildStatsSummary(system, entries) {
   return stats;
 }
 
-/* ========================================================================= DASHBOARD */
+function emptyNarrative() {
+  return { pendahuluan: "", perParameter: {}, reviewTren: "", kesimpulan: "" };
+}
+function emptySignoff() {
+  return { dinilai: { nama: "", jabatan: "", tanggal: "" }, diperiksa: { nama: "", jabatan: "", tanggal: "" } };
+}
+
+/* =========================================================================
+   7. KONTROL MINGGUAN PANEL
+   ========================================================================= */
+function emptyKontrolFields() {
+  return {
+    noKontrolMedia: "", noKontrolBakteri: "", kontrolPositif: "", kontrolNegatif: "",
+    kontrolNegatifLAL: "", kontrolPositifLAL: "", noBetLAL: "", noBetCSE: "", sensitivitasLAL: "", sensitivitasCSE: "",
+  };
+}
+
+function kontrolFieldsFrom(rec) {
+  const f = emptyKontrolFields();
+  Object.keys(f).forEach((k) => { f[k] = rec?.[k] || ""; });
+  return f;
+}
+
+function KontrolMingguanPanel({ systemKey, jenis, monthKey, entries, records, canInput, saving, onSave }) {
+  const isWFIType = jenis === "WFI" || jenis === "Pure Steam";
+  const defaultWeekKey = monthDefaultWeekKey(monthKey);
+
+  const weeks = useMemo(() => {
+    const map = new Map();
+    entries.forEach((e) => {
+      if (!e.tanggal) return;
+      const wk = weekKeyForISO(e.tanggal);
+      if (wk && !map.has(wk.key)) map.set(wk.key, wk);
+    });
+    return Array.from(map.values()).sort((a, b) => (a.year - b.year) || (a.month - b.month) || (a.weekNum - b.weekNum));
+  }, [entries]);
+
+  const [defaultRow, setDefaultRow] = useState(() => {
+    const rec = records.find((r) => r.weekKey === defaultWeekKey && r.system === systemKey);
+    return kontrolFieldsFrom(rec);
+  });
+
+  const [exceptions, setExceptions] = useState(() => {
+    const prefix = monthKey + "-W";
+    const init = {};
+    records.forEach((r) => {
+      if (r.weekKey.indexOf(prefix) !== 0) return;
+      if (r.weekKey === defaultWeekKey) return;
+      if (r.system !== systemKey) return;
+      init[r.weekKey] = kontrolFieldsFrom(r);
+    });
+    return init;
+  });
+
+  const [addWeekKey, setAddWeekKey] = useState("");
+  const [pendingClears, setPendingClears] = useState([]);
+
+  function updateDefault(patch) {
+    setDefaultRow((prev) => ({ ...prev, ...patch }));
+  }
+
+  function updateException(weekKey, patch) {
+    setExceptions((prev) => ({ ...prev, [weekKey]: { ...prev[weekKey], ...patch } }));
+  }
+
+  function addException() {
+    if (!addWeekKey) return;
+    setExceptions((prev) => ({ ...prev, [addWeekKey]: { ...defaultRow } }));
+    setAddWeekKey("");
+  }
+
+  function removeException(weekKey) {
+    setExceptions((prev) => {
+      const { [weekKey]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setPendingClears((prev) => [...prev, weekKey]);
+  }
+
+  const exceptionWeekKeys = Object.keys(exceptions).sort();
+  const addableWeeks = weeks.filter((wk) => !exceptions[wk.key]);
+
+  function handleSaveAll() {
+    const out = [{ weekKey: defaultWeekKey, system: systemKey, ...defaultRow }];
+    exceptionWeekKeys.forEach((weekKey) => {
+      out.push({ weekKey, system: systemKey, ...kontrolFieldsFrom(exceptions[weekKey]) });
+    });
+    pendingClears.forEach((weekKey) => out.push({ weekKey, system: systemKey, ...emptyKontrolFields() }));
+    onSave(out);
+    setPendingClears([]);
+  }
+
+  function renderFieldInputs(row, onPatch) {
+    return (
+      <>
+        <td className="px-2 py-1.5">
+          <input type="text" disabled={!canInput} value={row.noKontrolMedia || ""} placeholder="-"
+            onChange={(ev) => onPatch({ noKontrolMedia: ev.target.value })}
+            className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50" />
+        </td>
+        <td className="px-2 py-1.5">
+          <input type="text" disabled={!canInput} value={row.noKontrolBakteri || ""} placeholder="-"
+            onChange={(ev) => onPatch({ noKontrolBakteri: ev.target.value })}
+            className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50" />
+        </td>
+        <td className="px-2 py-1.5">
+          <select disabled={!canInput} value={row.kontrolPositif || ""} onChange={(ev) => onPatch({ kontrolPositif: ev.target.value })}
+            className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50 font-semibold">
+            <option value="">-</option>
+            {QUALI_OPTIONS.kontrolPositif.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </td>
+        <td className="px-2 py-1.5">
+          <select disabled={!canInput} value={row.kontrolNegatif || ""} onChange={(ev) => onPatch({ kontrolNegatif: ev.target.value })}
+            className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50 font-semibold">
+            <option value="">-</option>
+            {QUALI_OPTIONS.kontrolNegatif.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </td>
+        {isWFIType && (
+          <>
+            <td className="px-2 py-1.5">
+              <select disabled={!canInput} value={row.kontrolNegatifLAL || ""} onChange={(ev) => onPatch({ kontrolNegatifLAL: ev.target.value })}
+                className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50 font-semibold">
+                <option value="">-</option>
+                {QUALI_OPTIONS.kontrolNegatif.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </td>
+            <td className="px-2 py-1.5">
+              <select disabled={!canInput} value={row.kontrolPositifLAL || ""} onChange={(ev) => onPatch({ kontrolPositifLAL: ev.target.value })}
+                className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50 font-semibold">
+                <option value="">-</option>
+                {QUALI_OPTIONS.kontrolPositif.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </td>
+            <td className="px-2 py-1.5">
+              <input type="text" disabled={!canInput} value={row.noBetLAL || ""} placeholder="-"
+                onChange={(ev) => onPatch({ noBetLAL: ev.target.value })}
+                className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50" />
+            </td>
+            <td className="px-2 py-1.5">
+              <input type="text" disabled={!canInput} value={row.noBetCSE || ""} placeholder="-"
+                onChange={(ev) => onPatch({ noBetCSE: ev.target.value })}
+                className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50" />
+            </td>
+            <td className="px-2 py-1.5">
+              <input type="text" disabled={!canInput} value={row.sensitivitasLAL || ""} placeholder="-"
+                onChange={(ev) => onPatch({ sensitivitasLAL: normalizeNumericInput(ev.target.value) })}
+                className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50 font-semibold" />
+            </td>
+            <td className="px-2 py-1.5">
+              <input type="text" disabled={!canInput} value={row.sensitivitasCSE || ""} placeholder="-"
+                onChange={(ev) => onPatch({ sensitivitasCSE: normalizeNumericInput(ev.target.value) })}
+                className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50 font-semibold" />
+            </td>
+          </>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="no-print mb-5 rounded-3xl border border-slate-200/80 bg-white p-5 shadow-xs">
+      <div className="mb-3 flex items-center justify-between border-b pb-3">
+        <div>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Kontrol Mingguan</h3>
+          <p className="text-[11px] text-slate-400">Nomor Kontrol Media/Bakteri &amp; hasil Kontrol Positif/Negatif{isWFIType ? " (mikrobiologi & LAL/Endotoksin)" : ""}</p>
+        </div>
+        {canInput && (
+          <button onClick={handleSaveAll} disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 shadow-xs">
+            {saving ? <Loader2 size={13} className="animate-spin" /> : null} Simpan Kontrol Mingguan
+          </button>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              <th className="px-2 py-1.5">Berlaku untuk</th>
+              <th className="px-2 py-1.5">No. Kontrol Media</th>
+              <th className="px-2 py-1.5">No. Kontrol Bakteri</th>
+              <th className="px-2 py-1.5">Kontrol Positif</th>
+              <th className="px-2 py-1.5">Kontrol Negatif</th>
+              {isWFIType && (
+                <>
+                  <th className="px-2 py-1.5">Kontrol Negatif (LAL)</th>
+                  <th className="px-2 py-1.5">Kontrol Positif (LAL)</th>
+                  <th className="px-2 py-1.5">No Bet LAL</th>
+                  <th className="px-2 py-1.5">No Bet CSE</th>
+                  <th className="px-2 py-1.5">Sensitivitas LAL</th>
+                  <th className="px-2 py-1.5">Sensitivitas CSE</th>
+                </>
+              )}
+              <th className="px-2 py-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-slate-100 bg-teal-50/40">
+              <td className="px-2 py-1.5 font-bold text-teal-950">Default (Bulan Ini)</td>
+              {renderFieldInputs(defaultRow, updateDefault)}
+              <td className="px-2 py-1.5"></td>
+            </tr>
+            {exceptionWeekKeys.map((weekKey) => {
+              const row = exceptions[weekKey];
+              const wk = weeks.find((w) => w.key === weekKey);
+              return (
+                <tr key={weekKey} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                  <td className="px-2 py-1.5 font-semibold text-slate-700">{wk ? weekLabel(wk) : weekKey}</td>
+                  {renderFieldInputs(row, (patch) => updateException(weekKey, patch))}
+                  <td className="px-2 py-1.5 text-center">
+                    {canInput && (
+                      <button onClick={() => removeException(weekKey)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 transition" title="Hapus pengecualian">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {canInput && addableWeeks.length > 0 && (
+        <div className="mt-3 flex items-center gap-2 text-xs">
+          <select value={addWeekKey} onChange={(ev) => setAddWeekKey(ev.target.value)}
+            className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs">
+            <option value="">-- Tambah pengecualian minggu --</option>
+            {addableWeeks.map((wk) => <option key={wk.key} value={wk.key}>{weekLabel(wk)}</option>)}
+          </select>
+          <button onClick={addException} disabled={!addWeekKey}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+            <Plus size={13} /> Tambah Pengecualian
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================================
+   8. SIDEBAR COMPONENT (WARNA ASLI SPA: TEAL THEME)
+   ========================================================================= */
+function Sidebar({ session, view, setView, status = {}, onNeedLogin, isOpen, onClose, notifications = [] }) {
+  const [expandedGroups, setExpandedGroups] = useState({ pw: true, wfi: true, ps: true });
+
+  const toggleGroup = (k) => {
+    setExpandedGroups((prev) => ({ ...prev, [k]: !prev[k] }));
+  };
+
+  const navigateTo = (newView) => {
+    if (newView.page === "detail" && !session) {
+      onNeedLogin();
+      return;
+    }
+    setView(newView);
+    if (window.innerWidth < 1024) onClose();
+  };
+
+  const criticalCount = (notifications || []).filter((n) => n.type === "critical").length;
+
+  return (
+    <>
+      {isOpen && (
+        <div
+          onClick={onClose}
+          className="fixed inset-0 z-40 bg-teal-950/60 backdrop-blur-xs lg:hidden transition-opacity duration-300"
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-72 bg-gradient-to-b from-teal-950 via-teal-900 to-teal-950 text-teal-100 border-r border-teal-800/60 flex flex-col transition-transform duration-300 ease-in-out lg:translate-x-0 ${
+          isOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="h-16 flex items-center justify-between px-5 border-b border-teal-800/80 bg-teal-950/80">
+          <button onClick={() => navigateTo({ page: "dashboard" })} className="flex items-center gap-3 text-left">
+            <img src="/logo-rama.png" alt="Logo" className="h-9 w-9 object-contain brightness-0 invert" />
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-white tracking-tight leading-tight truncate">SPA Monitoring</p>
+              <p className="text-[10px] font-medium text-teal-300 truncate">PT. Rama Emerald Multi Sukses</p>
+            </div>
+          </button>
+          <button onClick={onClose} className="text-teal-400 hover:text-white lg:hidden p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin">
+          <div className="space-y-1">
+            <p className="px-3 text-[10px] font-bold uppercase tracking-wider text-teal-400/80 mb-2">Menu Utama</p>
+            <button
+              onClick={() => navigateTo({ page: "dashboard" })}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                view.page === "dashboard"
+                  ? "bg-teal-700/80 text-white shadow-lg shadow-teal-950/50 border border-teal-500/30"
+                  : "text-teal-200/80 hover:bg-teal-800/50 hover:text-white"
+              }`}
+            >
+              <LayoutDashboard size={16} />
+              <span>Dashboard Global SPA</span>
+            </button>
+
+            {session && (
+              <button
+                onClick={() => navigateTo({ page: "notifications" })}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  view.page === "notifications"
+                    ? "bg-teal-700/80 text-white shadow-lg shadow-teal-950/50 border border-teal-500/30"
+                    : "text-teal-200/80 hover:bg-teal-800/50 hover:text-white"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Bell size={16} />
+                  <span>Pusat Notifikasi &amp; Alert</span>
+                </div>
+                {notifications.length > 0 && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold text-white ${
+                      criticalCount > 0 ? "bg-red-500 animate-pulse" : "bg-amber-400 text-teal-950"
+                    }`}
+                  >
+                    {notifications.length}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {session && hasAccess(session, "Supervisor") && (
+              <button
+                onClick={() => navigateTo({ page: "activity" })}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  view.page === "activity"
+                    ? "bg-teal-700/80 text-white shadow-lg shadow-teal-950/50 border border-teal-500/30"
+                    : "text-teal-200/80 hover:bg-teal-800/50 hover:text-white"
+                }`}
+              >
+                <History size={16} />
+                <span>Riwayat Audit Trail</span>
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <p className="px-3 text-[10px] font-bold uppercase tracking-wider text-teal-400/80 mb-2">Sistem Distribusi Air</p>
+            {GROUPS.map((g) => {
+              const isOpenGroup = !!expandedGroups[g.key];
+              const isGroupActive = view.page === "detail" && g.items.includes(view.system);
+              const GroupIcon = g.key === "ps" ? Flame : g.key === "wfi" ? Droplet : Layers;
+
+              return (
+                <div key={g.key} className="space-y-0.5">
+                  <button
+                    onClick={() => toggleGroup(g.key)}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition ${
+                      isGroupActive ? "text-teal-200" : "text-teal-300/80 hover:bg-teal-800/40 hover:text-white"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 truncate">
+                      <GroupIcon size={14} className="text-teal-400 shrink-0" />
+                      <span className="truncate">{g.title}</span>
+                    </div>
+                    <ChevronDown
+                      size={14}
+                      className={`text-teal-400/70 transition-transform duration-200 ${isOpenGroup ? "rotate-180" : ""}`}
+                    />
+                  </button>
+
+                  {isOpenGroup && (
+                    <div className="pl-4 pr-1 py-1 space-y-0.5 border-l border-teal-700/50 ml-4">
+                      {g.items.map((sysKey) => {
+                        const sys = SYSTEMS.find((s) => s.key === sysKey);
+                        const st = status?.[sysKey];
+                        const active = view.page === "detail" && view.system === sysKey;
+                        const dotColor = st?.hasData ? (st.level >= 4 ? "#ef4444" : st.level === 3 ? "#f97316" : "#22c55e") : "#5eead4";
+
+                        return (
+                          <button
+                            key={sysKey}
+                            onClick={() => navigateTo({ page: "detail", system: sysKey })}
+                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] transition ${
+                              active
+                                ? "bg-teal-700 text-white font-semibold shadow-xs"
+                                : "text-teal-200/70 hover:bg-teal-800/40 hover:text-white"
+                            }`}
+                          >
+                            <span className="truncate">{sys?.label}</span>
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-t border-teal-800/80 bg-teal-950/90 text-[10px] text-teal-300 flex justify-between items-center select-none">
+          <span className="font-mono text-teal-400/90">POS.QA.SPA.001</span>
+          <span className="flex items-center gap-1.5 text-teal-300 font-semibold">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            Online Sync
+          </span>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+/* =========================================================================
+   9. HEADER BAR COMPONENT
+   ========================================================================= */
+function HeaderBar({
+  session,
+  onLoginClick,
+  onLogout,
+  onProfileClick,
+  month,
+  setMonth,
+  onToggleSidebar,
+  notifications = [],
+  onSelectNotification,
+}) {
+  const [showNotifPopover, setShowNotifPopover] = useState(false);
+  const avatarLetter = (session?.nama || session?.username || "U").charAt(0).toUpperCase();
+  const criticalCount = (notifications || []).filter((n) => n.type === "critical").length;
+
+  return (
+    <header className="no-print sticky top-0 z-30 h-16 border-b border-teal-100 bg-white/90 backdrop-blur-md px-4 lg:px-8">
+      <div className="h-full flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <button onClick={onToggleSidebar} className="lg:hidden p-2 rounded-xl border border-teal-200 text-teal-800 hover:bg-teal-50">
+            <Menu size={18} />
+          </button>
+          <div className="hidden sm:block">
+            <p className="text-xs font-bold text-teal-950">PT. Rama Emerald Multi Sukses</p>
+            <p className="text-[10px] text-teal-600">Quality Assurance &amp; Quality Control</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <label className="inline-flex items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50/60 px-3 py-1.5 text-xs text-teal-900 shadow-2xs">
+            <CalendarIcon size={13} className="text-teal-700" />
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="bg-transparent border-none outline-none font-semibold text-xs text-teal-950 [color-scheme:light]"
+            />
+          </label>
+
+          {session && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowNotifPopover(!showNotifPopover)}
+                className="relative p-2 rounded-xl border border-teal-200 text-teal-700 hover:bg-teal-50 hover:text-teal-900 transition shadow-2xs"
+                title="Pusat Notifikasi & Alarm Kualitas Air"
+              >
+                <Bell size={16} />
+                {notifications.length > 0 && (
+                  <span
+                    className={`absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full text-[9px] font-extrabold text-white animate-pulse shadow-sm ${
+                      criticalCount > 0 ? "bg-red-600" : "bg-amber-500"
+                    }`}
+                  >
+                    {notifications.length}
+                  </span>
+                )}
+              </button>
+
+              {showNotifPopover && (
+                <>
+                  <div onClick={() => setShowNotifPopover(false)} className="fixed inset-0 z-40 bg-transparent" />
+                  <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-3xl bg-white shadow-2xl border border-teal-100 z-50 overflow-hidden animate-fade-in">
+                    <div className="flex items-center justify-between px-4 py-3 bg-teal-50 border-b border-teal-100">
+                      <div className="flex items-center gap-2">
+                        <Bell size={14} className="text-teal-700" />
+                        <h4 className="text-xs font-bold text-teal-950">Pusat Notifikasi SPA</h4>
+                      </div>
+                      <span className="text-[10px] font-semibold bg-teal-200/70 text-teal-900 px-2 py-0.5 rounded-full">
+                        {notifications.length} Item
+                      </span>
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 p-1 text-xs">
+                      {notifications.length === 0 ? (
+                        <div className="p-6 text-center text-slate-400 space-y-1">
+                          <CheckCircle2 size={24} className="mx-auto text-emerald-500 mb-1.5" />
+                          <p className="font-semibold text-slate-700 text-xs">Semua Parameter Air Terkendali</p>
+                          <p className="text-[10px] text-slate-400">Tidak ada deviasi TOC, Konduktivitas, pH, atau Bioburden.</p>
+                        </div>
+                      ) : (
+                        notifications.map((item, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              onSelectNotification(item);
+                              setShowNotifPopover(false);
+                            }}
+                            className={`p-3 transition cursor-pointer hover:bg-teal-50/50 flex items-start gap-2.5 ${
+                              item.type === "critical" ? "bg-red-50/40" : "bg-amber-50/30"
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0 space-y-0.5">
+                              <p className="font-bold text-slate-800 text-[11px] truncate">{item.title}</p>
+                              <p className="text-[11px] text-slate-600 leading-snug">{item.desc}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {session ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onProfileClick}
+                className="flex items-center gap-2 rounded-xl bg-teal-50 hover:bg-teal-100/70 border border-teal-200/60 px-3 py-1.5 text-xs font-semibold text-teal-900 transition"
+              >
+                <div className="w-6 h-6 rounded-lg bg-teal-800 text-white flex items-center justify-center text-[10px] font-bold">
+                  {avatarLetter}
+                </div>
+                <div className="hidden sm:block text-left leading-tight">
+                  <p className="truncate max-w-[120px]">{session?.nama || session?.username}</p>
+                  <p className="text-[9px] text-teal-600 font-normal">{session?.role || "User"}</p>
+                </div>
+              </button>
+              <button
+                onClick={onLogout}
+                className="p-2 rounded-xl border border-teal-200 text-teal-700 hover:bg-red-50 hover:text-red-700 transition"
+                title="Keluar"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onLoginClick}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition"
+            >
+              <LogIn size={14} /> Masuk
+            </button>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/* =========================================================================
+   10. PUSAT NOTIFIKASI HALAMAN DETAIL
+   ========================================================================= */
+function NotificationsPage({ notifications = [], onSelectNotification, setView }) {
+  return (
+    <div className="space-y-4 max-w-4xl mx-auto">
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => setView({ page: "dashboard" })}
+          className="text-xs font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition"
+        >
+          <ChevronLeft size={16} /> Kembali ke Dashboard
+        </button>
+      </div>
+
+      <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
+        <div className="flex items-center justify-between border-b pb-3.5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-800 flex items-center justify-center">
+              <Bell size={20} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-800">Pusat Notifikasi &amp; Alert Kualitas Air</h2>
+              <p className="text-xs text-slate-400">Monitoring deviasi TOC, Konduktivitas, pH, Mikrobiologi &amp; Endotoksin</p>
+            </div>
+          </div>
+          <span className="text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1 rounded-full">
+            {notifications.length} Notifikasi Aktif
+          </span>
+        </div>
+
+        {notifications.length === 0 ? (
+          <div className="p-12 text-center text-slate-400 space-y-2">
+            <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-2" />
+            <p className="font-bold text-slate-700 text-sm">Seluruh Sistem Air Berada Dalam Kondisi Terkendali</p>
+            <p className="text-xs text-slate-400 max-w-sm mx-auto">
+              Tidak ada hasil uji yang melampaui Action Limit/Syarat pada periode ini.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {notifications.map((item, idx) => (
+              <div
+                key={idx}
+                onClick={() => onSelectNotification(item)}
+                className={`p-4 transition cursor-pointer hover:bg-slate-50 flex items-start justify-between gap-4 rounded-2xl ${
+                  item.type === "critical"
+                    ? "bg-red-50/40 border border-red-100 my-1.5"
+                    : "bg-amber-50/30 border border-amber-100 my-1.5"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5">
+                    {item.type === "critical" ? (
+                      <AlertOctagon size={20} className="text-red-600" />
+                    ) : (
+                      <Clock size={20} className="text-amber-600" />
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="font-bold text-slate-800 text-xs">{item.title}</p>
+                    <p className="text-xs text-slate-600">{item.desc}</p>
+                    <p className="text-[10px] font-semibold text-slate-400">
+                      Sistem: <span className="text-slate-700">{item.systemLabel}</span>
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0 flex flex-col justify-between items-end">
+                  <span className="text-[10px] text-slate-400">{item.time || "Hari Ini"}</span>
+                  <span className="text-xs text-teal-800 font-bold hover:underline inline-flex items-center gap-0.5 mt-2">
+                    Buka Detail <ChevronRight size={14} />
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   11. HALAMAN UTAMA / SYSTEM DETAIL / REPORT HASIL
+   ========================================================================= */
 function Dashboard({ monthKey, setMonthKey, statusIndex, loadingStatus, statusError, onOpen }) {
   const perluCount = SYSTEMS.filter((s) => (statusIndex[s.key]?.level || 0) === 3).length;
   const tmsCount = SYSTEMS.filter((s) => (statusIndex[s.key]?.level || 0) >= 4).length;
   return (
-    <div>
-      <div className="relative overflow-hidden bg-gradient-to-br from-teal-950 via-teal-900 to-teal-800">
-        <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-teal-400/20 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-16 left-1/3 h-48 w-48 rounded-full bg-emerald-400/10 blur-3xl" />
-        <div className="relative mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-4 px-6 py-7">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-teal-300">PT. Rama Emerald Multi Sukses — QA</p>
-            <h1 className="text-2xl font-bold text-white">Dashboard SPA — Sistem Pengolahan Air</h1>
-            <p className="mt-1 text-sm text-teal-100">Rekap pengkajian trend Purified Water, Water For Injection, dan Pure Steam</p>
-          </div>
-          <label className="no-print inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white backdrop-blur-sm">
-            <CalendarIcon size={15} className="text-teal-200" />
-            <input type="month" value={monthKey} onChange={(ev) => setMonthKey(ev.target.value)} onClick={(ev) => ev.currentTarget.showPicker?.()}
-              className="border-none bg-transparent text-sm text-white outline-none [color-scheme:dark]" />
-          </label>
+    <div className="space-y-6">
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-teal-950 via-teal-900 to-teal-800 p-6 sm:p-8 text-white shadow-xl">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-teal-400/20 blur-3xl animate-pulse" />
+        <div className="relative space-y-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-500/20 border border-teal-500/30 px-3 py-0.5 text-[11px] font-semibold text-teal-200">
+            <ShieldCheck size={13} /> Sistem Pengolahan Air (Purified Water, WFI, Pure Steam)
+          </span>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Status Kualitas Sistem Pengolahan Air</h1>
+          <p className="text-xs sm:text-sm text-teal-100/90 max-w-2xl leading-relaxed">
+            Pemantauan rutin parameter Konduktivitas, pH, TOC, Mikrobiologi, dan Endotoksin periode <b>{monthLabel(monthKey)}</b>.
+          </p>
         </div>
       </div>
-      <div className="mx-auto max-w-5xl p-6">
 
-        {statusError && (
-          <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{statusError}</p>
-        )}
+      {statusError && (
+        <p className="rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200 font-semibold">{statusError}</p>
+      )}
 
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <StatCard icon={<LayoutGrid size={17} />} iconColor="#0f766e" tint="#ccfbf1" border="#99f6e4" value={SYSTEMS.length} label="Total Sistem" />
-          <StatCard icon={<CheckCircle2 size={17} />} iconColor="#15803d" tint="#dcfce7" border="#bbf7d0" value={SYSTEMS.filter((s) => statusIndex[s.key]?.hasData && (statusIndex[s.key]?.level || 0) < 3).length} label="Terkendali" />
-          <StatCard icon={<AlertTriangle size={17} />} iconColor="#c2410c" tint="#ffedd5" border="#fed7aa" value={perluCount} label="Perlu Perhatian" />
-          <StatCard icon={<XCircle size={17} />} iconColor="#b91c1c" tint="#fee2e2" border="#fecaca" value={tmsCount} label="Melebihi Syarat" />
-          <StatCard icon={<FileQuestion size={17} />} iconColor="#475569" tint="#f1f5f9" border="#e2e8f0" value={SYSTEMS.filter((s) => !statusIndex[s.key]?.hasData).length} label="Belum Ada Data" />
-        </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <StatCard icon={<Layers size={17} />} iconColor="#0f766e" tint="#ccfbf1" border="#99f6e4" value={SYSTEMS.length} label="Total Sistem" />
+        <StatCard icon={<CheckCircle2 size={17} />} iconColor="#15803d" tint="#dcfce7" border="#bbf7d0" value={SYSTEMS.filter((s) => statusIndex[s.key]?.hasData && (statusIndex[s.key]?.level || 0) < 3).length} label="Terkendali" />
+        <StatCard icon={<AlertTriangle size={17} />} iconColor="#c2410c" tint="#ffedd5" border="#fed7aa" value={perluCount} label="Perlu Perhatian" />
+        <StatCard icon={<XCircle size={17} />} iconColor="#b91c1c" tint="#fee2e2" border="#fecaca" value={tmsCount} label="Melebihi Syarat" />
+        <StatCard icon={<FileQuestion size={17} />} iconColor="#475569" tint="#f1f5f9" border="#e2e8f0" value={SYSTEMS.filter((s) => !statusIndex[s.key]?.hasData).length} label="Belum Ada Data" />
+      </div>
 
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Sistem — {monthLabel(monthKey)}</p>
+      <div className="space-y-3">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">Daftar Sistem Air — {monthLabel(monthKey)}</h2>
         <div className="space-y-2.5">
           {SYSTEMS.map((s) => {
             const st = statusIndex[s.key];
             const level = st?.hasData ? (st?.level || 0) : 0;
-            const accent = STATUS_ACCENT[level];
             const tint = STATUS_TINT[level];
             return (
-              <button key={s.key} onClick={() => onOpen(s.key)}
-                className="group flex w-full items-center justify-between overflow-hidden rounded-xl border border-slate-200 bg-white pr-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-md">
-                <span className="self-stretch w-1.5" style={{ background: accent }} />
-                <div className="flex flex-1 items-center gap-3 py-3.5 pl-3.5">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg" style={{ background: tint.bg, color: tint.fg }}><Droplet size={19} /></span>
+              <button
+                key={s.key}
+                onClick={() => onOpen(s.key)}
+                className="group flex w-full items-center justify-between overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 text-left shadow-xs transition-all duration-300 ease-out hover:-translate-y-1 hover:border-teal-400 hover:shadow-lg hover:shadow-teal-950/5"
+              >
+                <div className="flex items-center gap-3.5">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl shadow-2xs transition-transform group-hover:scale-105" style={{ background: tint.bg, color: tint.fg }}>
+                    {s.jenis === "Pure Steam" ? <Flame size={20} /> : <Droplet size={20} />}
+                  </span>
                   <div>
-                    <p className="font-semibold text-slate-800">{s.label}</p>
-                    <p className="text-xs text-slate-400">{loadingStatus ? "Memuat..." : st?.hasData ? "Ada data periode ini" : "Belum ada data periode ini"}</p>
+                    <p className="font-bold text-slate-800 text-sm transition-colors group-hover:text-teal-900">{s.label}</p>
+                    <p className="text-xs text-slate-400">{loadingStatus ? "Memuat..." : st?.hasData ? "Ada data pengujian periode ini" : "Belum ada data pengujian periode ini"}</p>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {loadingStatus ? <Loader2 className="animate-spin text-slate-300" size={18} /> : <StatusPill level={st?.level || 0} hasData={!!st?.hasData} />}
-                  <ChevronRight size={16} className="text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-400" />
+                  <ChevronRight size={16} className="text-slate-300 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-teal-700" />
                 </div>
               </button>
             );
@@ -809,14 +1446,14 @@ function Dashboard({ monthKey, setMonthKey, statusIndex, loadingStatus, statusEr
 function StatCard({ icon, iconColor, tint, border, value, label }) {
   return (
     <div
-      className="rounded-xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="rounded-2xl border p-4 shadow-xs transition-all duration-300 ease-out hover:-translate-y-1.5 hover:scale-105 hover:shadow-lg cursor-default select-none"
       style={{ background: `linear-gradient(155deg, ${tint} 0%, #ffffff 72%)`, borderColor: border }}
     >
-      <span className="mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white shadow-sm" style={{ color: iconColor }}>
+      <span className="mb-2 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white shadow-2xs" style={{ color: iconColor }}>
         {icon}
       </span>
       <p className="text-2xl font-bold text-slate-800">{value}</p>
-      <p className="text-xs font-medium text-slate-600">{label}</p>
+      <p className="text-xs font-semibold text-slate-600 mt-0.5">{label}</p>
     </div>
   );
 }
@@ -829,15 +1466,33 @@ const STATUS_TINT = {
   4: { bg: "#fee2e2", fg: "#b91c1c" },
 };
 
-const STATUS_ACCENT = { 0: "#cbd5e1", 1: "#14b8a6", 2: "#14b8a6", 3: "#f97316", 4: "#ef4444" };
+function LegendRow() {
+  const items = [
+    { label: "Terkendali", bg: "#dcfce7", color: "#15803d" },
+    { label: "Alert", bg: "#fef3c7", color: "#b45309" },
+    { label: "Action", bg: "#ffedd5", color: "#c2410c" },
+    { label: "Melebihi Syarat", bg: "#fee2e2", color: "#b91c1c" },
+    { label: "N/A / Belum diuji", bg: "#f1f5f9", color: "#64748b" },
+  ];
+  return (
+    <div className="flex flex-wrap gap-3 text-xs">
+      {items.map((it) => (
+        <span key={it.label} className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: it.bg, border: `1px solid ${it.color}` }} />
+          <span className="text-slate-600 font-medium">{it.label}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
-/* ========================================================================= REPORT HASIL PEMERIKSAAN (formulir QC fisik yang didigitalkan) */
+/* =========================================================================
+   12. REPORT HASIL PEMERIKSAAN (FORMULIR QC FISIK DIGITIZED)
+   ========================================================================= */
 function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token, onBack, kontrolRecords = [], masterPoints = [] }) {
   const system = SYSTEMS.find((s) => s.key === systemKey);
   const docNo = DOC_NUMBERS[systemKey];
   const isWFIType = system.jenis === "WFI" || system.jenis === "Pure Steam";
-  // Kolom mutu air dasar (di luar Endotoksin — Endotoksin ditempatkan manual
-  // setelah blok Kontrol Mikrobiologi/Tanggal Baca, sesuai urutan form fisik).
   const baseParams = ["kejernihan", "warna", "bau", "konduktivitas", "ph", "toc", "mikrobiologi"];
 
   const [meta, setMeta] = useState(null);
@@ -859,7 +1514,7 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
         if (cancelled) return;
         setMeta(res);
       } catch (err) {
-        if (!cancelled) setErrorMsg("Gagal memuat Report Hasil Pemeriksaan: " + err.message);
+        if (!cancelled) setErrorMsg("Gagal memuat Report Hasil: " + err.message);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -868,10 +1523,6 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
     return () => { cancelled = true; };
   }, [systemKey, monthKey]);
 
-  // Kelompokkan seluruh data bulan ini per Minggu (Senin-Jumat, aturan
-  // potong-bulan sama seperti Kontrol Mingguan) — 1 formulir = 1 bulan penuh,
-  // seperti form fisik yang punya beberapa blok "Minggu I/II/III/..." dalam
-  // 1 halaman.
   const weeks = useMemo(() => {
     const map = new Map();
     entriesForMonth.forEach((e) => {
@@ -923,43 +1574,22 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
 
   const analis = meta?.analis || { nama: "", tanggal: "" };
   const diperiksa = meta?.diperiksa || { nama: "", tanggal: "" };
-
-  // Total kolom (buat colSpan baris header "Minggu N"): Titik + Tanggal +
-  // baseParams + 4 kolom kontrol mikro + Tanggal Baca + (WFI/Pure Steam: 1
-  // Endotoksin + 6 kolom LAL/CSE) + Kesimpulan.
   const colCount = 2 + baseParams.length + 4 + 1 + (isWFIType ? 7 : 0) + 1;
-
-  // Lebar kolom proporsional (dipakai lewat <colgroup>) supaya saat print
-  // table-layout:fixed tidak membuat semua kolom sama lebar rata — Titik
-  // Sampling & kolom kontrol butuh sedikit lebih lega dari kolom parameter biasa.
   const colWeights = [
-    1.6, 1.3, // Titik Sampling, Tanggal
+    1.6, 1.3,
     ...baseParams.map(() => 1),
-    1.1, 1, 1.1, 1, // No Kontrol Media, Kontrol Negatif, No Kontrol Bakteri, Kontrol Positif
-    1.3, // Tanggal Baca
-    ...(isWFIType ? [1, 1, 1, 1, 1, 1, 1] : []), // Endotoksin, Kontrol Negatif/Positif LAL, No Bet LAL/CSE, Sensitivitas LAL/CSE
-    1, // Kesimpulan
+    1.1, 1, 1.1, 1,
+    1.3,
+    ...(isWFIType ? [1, 1, 1, 1, 1, 1, 1] : []),
+    1,
   ];
   const totalWeight = colWeights.reduce((s, w) => s + w, 0);
-
-  if (!session) {
-    return (
-      <div className="mx-auto max-w-md p-6 pt-20 text-center">
-        <Lock size={28} className="mx-auto mb-3 text-slate-300" />
-        <h2 className="mb-1 text-base font-bold text-slate-700">Perlu Login</h2>
-        <p className="mb-4 text-sm text-slate-500">Formulir Pemeriksaan QC hanya bisa dilihat oleh akun yang sudah login.</p>
-        <button onClick={onBack} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-          <ChevronLeft size={16} /> Kembali ke Pengkajian SPA
-        </button>
-      </div>
-    );
-  }
 
   const canPrint = hasAccess(session, "Staff");
 
   return (
     <div className="mx-auto max-w-6xl p-6 print:max-w-none print:p-0" data-print-blocked={!canPrint}>
-      <div className="print-blocked-notice">Akses print/download PDF dibatasi untuk akun Staff/Supervisor/Manager ke atas. Silakan login dengan akun yang sesuai.</div>
+      <div className="print-blocked-notice">Akses print dibatasi untuk Staff/Supervisor/Manager ke atas.</div>
       <style>{`
         @media print {
           @page { size: A4 landscape; margin: 1cm; }
@@ -974,468 +1604,187 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
         }
       `}</style>
       <div className="no-print mb-4 flex items-center justify-between">
-        <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-700">
+        <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800">
           <ChevronLeft size={16} /> Kembali ke Pengkajian SPA
         </button>
         {canPrint && (
-          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-900">
-            <Printer size={15} /> Cetak / Download PDF
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-teal-950 shadow-xs">
+            <Printer size={14} /> Cetak / Download PDF
           </button>
         )}
       </div>
 
-      {errorMsg && <p className="no-print mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{errorMsg}</p>}
+      {errorMsg && <p className="no-print mb-4 rounded-2xl bg-red-50 p-3.5 text-xs text-red-600 border border-red-200">{errorMsg}</p>}
 
       {loading ? (
-        <p className="py-10 text-center text-sm text-slate-400">Memuat...</p>
+        <div className="flex justify-center p-12"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
       ) : weeks.length === 0 ? (
-        <p className="py-10 text-center text-sm text-slate-400">Belum ada data pengujian untuk periode ini. Isi dulu di halaman Input Data.</p>
+        <p className="py-12 text-center text-xs text-slate-400 bg-white rounded-3xl border border-dashed border-slate-200">Belum ada data pengujian untuk periode ini.</p>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-300 print-card">
-          <div className="bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-5 py-4">
+        <div className="overflow-hidden rounded-3xl border border-slate-200 print-card shadow-xs">
+          <div className="bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-6 py-4">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <img src="/logo-rama.png" alt="Logo PT. Rama Emerald Multi Sukses" className="h-12 w-12 shrink-0 object-contain brightness-0 invert" />
+              <div className="flex items-center gap-3.5">
+                <img src="/logo-rama.png" alt="Logo" className="h-11 w-11 shrink-0 object-contain brightness-0 invert" />
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-teal-300">PT. Rama Emerald Multi Sukses</p>
-                  <h2 className="text-lg font-bold uppercase text-white">Formulir Pemeriksaan {system.jenis}</h2>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-300">PT. Rama Emerald Multi Sukses</p>
+                  <h2 className="text-base font-bold uppercase text-white">Formulir Pemeriksaan {system.jenis}</h2>
                 </div>
               </div>
               {docNo && (
-                <div className="shrink-0 text-right text-[11px] leading-tight text-teal-100">
-                  <p><span className="text-teal-300">No. </span><span className="font-medium text-white">: {docNo.no}</span></p>
-                  <p><span className="text-teal-300">Tgl Berlaku </span><span className="font-medium text-white">: {docNo.tglBerlaku}</span></p>
-                  <p><span className="text-teal-300">Menggantikan No. </span><span className="font-medium text-white">: {docNo.menggantikanNo}</span></p>
-                  <p><span className="text-teal-300">Tgl Berlaku </span><span className="font-medium text-white">: {docNo.tglBerlakuLama}</span></p>
+                <div className="shrink-0 text-right text-[10px] leading-tight text-teal-100 font-mono">
+                  <p><span className="text-teal-300">No: </span><span className="font-bold text-white">{docNo.no}</span></p>
+                  <p><span className="text-teal-300">Tgl Berlaku: </span><span className="text-white">{docNo.tglBerlaku}</span></p>
                 </div>
               )}
             </div>
           </div>
-          <div className="bg-white p-6">
+          <div className="bg-white p-6 space-y-4">
+            <div className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2 border-b pb-3">
+              <p><span className="text-slate-400">Sistem</span> : <span className="font-bold text-slate-800">{system.label}</span></p>
+              <p><span className="text-slate-400">Periode</span> : <span className="font-bold text-slate-800">{monthLabel(monthKey)}</span></p>
+            </div>
 
-          <div className="mb-4 grid grid-cols-1 gap-1 text-sm sm:grid-cols-2">
-            <p><span className="text-slate-500">Sistem</span> : <span className="font-medium">{system.label}</span></p>
-            <p><span className="text-slate-500">Periode</span> : <span className="font-medium">{monthLabel(monthKey)}</span></p>
-          </div>
+            <div className="qc-form-table-wrap">
+              <table className="qc-form-table w-full border-collapse text-[10.5px] leading-tight">
+                <colgroup>
+                  {colWeights.map((w, i) => <col key={i} style={{ width: `${(w / totalWeight * 100).toFixed(3)}%` }} />)}
+                </colgroup>
+                <thead>
+                  <tr className="border border-slate-200 bg-slate-50 text-left uppercase tracking-wide text-slate-500 font-semibold text-[10px]">
+                    <th className="border border-slate-200 px-1.5 py-2">Titik Sampling</th>
+                    <th className="border border-slate-200 px-1.5 py-2">Tanggal</th>
+                    {baseParams.map((p) => (
+                      <th key={p} className="border border-slate-200 px-1.5 py-2 text-center">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>
+                    ))}
+                    <th className="border border-slate-200 px-1.5 py-2 text-center">No. Kontrol Media</th>
+                    <th className="border border-slate-200 px-1.5 py-2 text-center">Kontrol Negatif</th>
+                    <th className="border border-slate-200 px-1.5 py-2 text-center">No. Kontrol Bakteri</th>
+                    <th className="border border-slate-200 px-1.5 py-2 text-center">Kontrol Positif</th>
+                    <th className="border border-slate-200 px-1.5 py-2 text-center">Tanggal Baca</th>
+                    {isWFIType && (
+                      <>
+                        <th className="border border-slate-200 px-1.5 py-2 text-center">{PARAM_META.endotoksin.short} ({PARAM_META.endotoksin.unit})</th>
+                        <th className="border border-slate-200 px-1.5 py-2 text-center">Kontrol Negatif</th>
+                        <th className="border border-slate-200 px-1.5 py-2 text-center">Kontrol Positif</th>
+                        <th className="border border-slate-200 px-1.5 py-2 text-center">No Bet LAL</th>
+                        <th className="border border-slate-200 px-1.5 py-2 text-center">No Bet CSE</th>
+                        <th className="border border-slate-200 px-1.5 py-2 text-center">Sensitivitas LAL</th>
+                        <th className="border border-slate-200 px-1.5 py-2 text-center">Sensitivitas CSE</th>
+                      </>
+                    )}
+                    <th className="border border-slate-200 px-1.5 py-2 text-center">Kesimpulan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weeks.map((grp) => {
+                    const rec = findKontrolMingguan(kontrolRecords, grp.wk.key, systemKey, monthKey) || {};
+                    let weekDeviates = false;
+                    if (rec.kontrolPositif && rec.kontrolPositif !== "Positif") weekDeviates = true;
+                    if (rec.kontrolNegatif && rec.kontrolNegatif !== "Negatif") weekDeviates = true;
+                    if (isWFIType) {
+                      if (rec.kontrolPositifLAL && rec.kontrolPositifLAL !== "Positif") weekDeviates = true;
+                      if (rec.kontrolNegatifLAL && rec.kontrolNegatifLAL !== "Negatif") weekDeviates = true;
+                    }
+                    return (
+                      <Fragment key={grp.wk.key}>
+                        <tr className="bg-teal-50/60">
+                          <td colSpan={colCount} className="border border-slate-200 px-2 py-1 font-bold text-teal-950">Minggu {grp.wk.weekNum}</td>
+                        </tr>
+                        {grp.rows.map((e, idx) => {
+                          let maxLevel = weekDeviates ? 4 : 0;
+                          baseParams.forEach((p) => { const st = statusFor(e[p], p, system.jenis); if (st.level > maxLevel) maxLevel = st.level; });
+                          if (isWFIType) { const st = statusFor(e.endotoksin, "endotoksin", system.jenis); if (st.level > maxLevel) maxLevel = st.level; }
+                          const ket = maxLevel >= 4 ? "TMS" : maxLevel === 0 ? "-" : "MS";
+                          return (
+                            <tr key={e.id} className="hover:bg-slate-50/50">
+                              <td className="border border-slate-200 px-1.5 py-1 font-semibold text-slate-800">{e.titikSampling}</td>
+                              <td className="border border-slate-200 px-1.5 py-1 text-slate-600">{isoToID(e.tanggal)}</td>
+                              {baseParams.map((p) => <td key={p} className="border border-slate-200 px-1.5 py-1 text-center font-medium">{displayValue(e[p])}</td>)}
+                              {idx === 0 && (
+                                <>
+                                  <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30 font-medium">{rec.noKontrolMedia || "-"}</td>
+                                  <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30 font-medium">{rec.kontrolNegatif || "-"}</td>
+                                  <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30 font-medium">{rec.noKontrolBakteri || "-"}</td>
+                                  <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30 font-medium">{rec.kontrolPositif || "-"}</td>
+                                </>
+                              )}
+                              <td className="border border-slate-200 px-1.5 py-1 text-center text-slate-500">{isoToID(addDaysISO(e.tanggal, 3))}</td>
+                              {isWFIType && (
+                                <>
+                                  <td className="border border-slate-200 px-1.5 py-1 text-center font-medium">{displayValue(e.endotoksin)}</td>
+                                  {idx === 0 && (
+                                    <>
+                                      <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30">{rec.kontrolNegatifLAL || "-"}</td>
+                                      <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30">{rec.kontrolPositifLAL || "-"}</td>
+                                      <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30">{rec.noBetLAL || "-"}</td>
+                                      <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30">{rec.noBetCSE || "-"}</td>
+                                      <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30">{rec.sensitivitasLAL || "-"}</td>
+                                      <td rowSpan={grp.rows.length} className="border border-slate-200 px-1.5 py-1 text-center align-middle bg-slate-50/30">{rec.sensitivitasCSE || "-"}</td>
+                                    </>
+                                  )}
+                                </>
+                              )}
+                              <td className={`border border-slate-200 px-1.5 py-1 text-center font-bold ${ket === "TMS" ? "text-red-600 bg-red-50/40" : ket === "-" ? "text-slate-400" : "text-emerald-600"}`}>{ket}</td>
+                            </tr>
+                          );
+                        })}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-          <div className="qc-form-table-wrap">
-            <table className="qc-form-table w-full border-collapse text-[10.5px] leading-tight">
-              <colgroup>
-                {colWeights.map((w, i) => <col key={i} style={{ width: `${(w / totalWeight * 100).toFixed(3)}%` }} />)}
-              </colgroup>
-              <thead>
-                <tr className="border border-slate-300 bg-slate-50 text-left uppercase tracking-wide text-slate-500">
-                  <th className="border border-slate-300 px-1.5 py-1.5">Titik Sampling</th>
-                  <th className="border border-slate-300 px-1.5 py-1.5">Tanggal</th>
-                  {baseParams.map((p) => (
-                    <th key={p} className="border border-slate-300 px-1.5 py-1.5">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>
-                  ))}
-                  <th className="border border-slate-300 px-1.5 py-1.5">No. Kontrol Media</th>
-                  <th className="border border-slate-300 px-1.5 py-1.5">Kontrol Negatif</th>
-                  <th className="border border-slate-300 px-1.5 py-1.5">No. Kontrol Bakteri</th>
-                  <th className="border border-slate-300 px-1.5 py-1.5">Kontrol Positif</th>
-                  <th className="border border-slate-300 px-1.5 py-1.5">Tanggal Baca</th>
-                  {isWFIType && (
-                    <>
-                      <th className="border border-slate-300 px-1.5 py-1.5">{PARAM_META.endotoksin.short} ({PARAM_META.endotoksin.unit})</th>
-                      <th className="border border-slate-300 px-1.5 py-1.5">Kontrol Negatif</th>
-                      <th className="border border-slate-300 px-1.5 py-1.5">Kontrol Positif</th>
-                      <th className="border border-slate-300 px-1.5 py-1.5">No Bet LAL</th>
-                      <th className="border border-slate-300 px-1.5 py-1.5">No Bet CSE</th>
-                      <th className="border border-slate-300 px-1.5 py-1.5">Sensitivitas LAL</th>
-                      <th className="border border-slate-300 px-1.5 py-1.5">Sensitivitas CSE</th>
-                    </>
-                  )}
-                  <th className="border border-slate-300 px-1.5 py-1.5">Kesimpulan</th>
-                </tr>
-              </thead>
-              <tbody>
-                {weeks.map((grp) => {
-                  const rec = findKontrolMingguan(kontrolRecords, grp.wk.key, systemKey, monthKey) || {};
-                  // Deviasi Kontrol Mingguan berlaku untuk SEMUA baris di minggu itu
-                  // (kalau kontrolnya tidak valid, seluruh hasil minggu itu diragukan).
-                  let weekDeviates = false;
-                  if (rec.kontrolPositif && rec.kontrolPositif !== "Positif") weekDeviates = true;
-                  if (rec.kontrolNegatif && rec.kontrolNegatif !== "Negatif") weekDeviates = true;
-                  if (isWFIType) {
-                    if (rec.kontrolPositifLAL && rec.kontrolPositifLAL !== "Positif") weekDeviates = true;
-                    if (rec.kontrolNegatifLAL && rec.kontrolNegatifLAL !== "Negatif") weekDeviates = true;
-                  }
-                  return (
-                    <Fragment key={grp.wk.key}>
-                      <tr className="bg-slate-100">
-                        <td colSpan={colCount} className="border border-slate-300 px-1.5 py-1 font-semibold text-slate-600">Minggu {grp.wk.weekNum}</td>
-                      </tr>
-                      {grp.rows.map((e, idx) => {
-                        let maxLevel = weekDeviates ? 4 : 0;
-                        baseParams.forEach((p) => { const st = statusFor(e[p], p, system.jenis); if (st.level > maxLevel) maxLevel = st.level; });
-                        if (isWFIType) { const st = statusFor(e.endotoksin, "endotoksin", system.jenis); if (st.level > maxLevel) maxLevel = st.level; }
-                        const ket = maxLevel >= 4 ? "TMS" : maxLevel === 0 ? "-" : "MS";
-                        return (
-                          <tr key={e.id}>
-                            <td className="border border-slate-300 px-1.5 py-1 font-medium">{e.titikSampling}</td>
-                            <td className="border border-slate-300 px-1.5 py-1">{isoToID(e.tanggal)}</td>
-                            {baseParams.map((p) => <td key={p} className="border border-slate-300 px-1.5 py-1 text-center">{displayValue(e[p])}</td>)}
-                            {idx === 0 && (
-                              <>
-                                <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.noKontrolMedia || "-"}</td>
-                                <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.kontrolNegatif || "-"}</td>
-                                <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.noKontrolBakteri || "-"}</td>
-                                <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.kontrolPositif || "-"}</td>
-                              </>
-                            )}
-                            <td className="border border-slate-300 px-1.5 py-1 text-center">{isoToID(addDaysISO(e.tanggal, 3))}</td>
-                            {isWFIType && (
-                              <>
-                                <td className="border border-slate-300 px-1.5 py-1 text-center">{displayValue(e.endotoksin)}</td>
-                                {idx === 0 && (
-                                  <>
-                                    <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.kontrolNegatifLAL || "-"}</td>
-                                    <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.kontrolPositifLAL || "-"}</td>
-                                    <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.noBetLAL || "-"}</td>
-                                    <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.noBetCSE || "-"}</td>
-                                    <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.sensitivitasLAL || "-"}</td>
-                                    <td rowSpan={grp.rows.length} className="border border-slate-300 px-1.5 py-1 text-center align-middle">{rec.sensitivitasCSE || "-"}</td>
-                                  </>
-                                )}
-                              </>
-                            )}
-                            <td className={`border border-slate-300 px-1.5 py-1 text-center font-semibold ${ket === "TMS" ? "text-red-600" : ket === "-" ? "text-slate-400" : "text-emerald-600"}`}>{ket}</td>
-                          </tr>
-                        );
-                      })}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="mt-6 rounded-xl border border-slate-200 p-5 print-card">
-            <h3 className="mb-3 text-sm font-bold text-slate-700">Tanda Tangan</h3>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {[
-                { field: "analis", label: "Diperiksa Oleh", nama: analis.nama, tanggal: analis.tanggal,
-                  canApprove: canInput, onApprove: handleSave,
-                  disabledNote: "Hanya Staff s/d Manager QC yang bisa menandatangani" },
-                { field: "diperiksa", label: "Mengetahui", nama: diperiksa.nama, tanggal: diperiksa.tanggal,
-                  canApprove: canApprove, onApprove: handleApprove,
-                  disabledNote: analis.nama ? "Hanya Supervisor s/d Manager QC yang bisa menyetujui" : "Menunggu tanda tangan \"Diperiksa Oleh\" terlebih dahulu" },
-              ].map(({ field, label, nama, tanggal, canApprove: fieldCanApprove, onApprove, disabledNote }) => (
-                <div key={field} className="rounded-lg border border-slate-200 p-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-                  <div className="mb-3 flex h-24 items-center justify-center rounded border border-dashed border-slate-300 print:h-28">
+            <div className="mt-6 rounded-3xl border border-slate-200 p-5 print-card">
+              <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Tanda Tangan Digital</h3>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {[
+                  { field: "analis", label: "Diperiksa Oleh", nama: analis.nama, tanggal: analis.tanggal,
+                    canApprove: canInput, onApprove: handleSave,
+                    disabledNote: "Hanya Staff s/d Manager QC yang bisa menandatangani" },
+                  { field: "diperiksa", label: "Mengetahui", nama: diperiksa.nama, tanggal: diperiksa.tanggal,
+                    canApprove: canApprove, onApprove: handleApprove,
+                    disabledNote: analis.nama ? "Hanya Supervisor s/d Manager QC yang bisa menyetujui" : "Menunggu tanda tangan \"Diperiksa Oleh\" terlebih dahulu" },
+                ].map(({ field, label, nama, tanggal, canApprove: fieldCanApprove, onApprove, disabledNote }) => (
+                  <div key={field} className="rounded-2xl border border-slate-200 p-3.5 bg-slate-50/50 flex flex-col justify-between min-h-[140px]">
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">{label}</p>
+                    <div className="mb-2 flex h-20 items-center justify-center rounded-xl border border-dashed border-slate-300">
+                      {nama ? (
+                        <VerifyQR type="reportHasil" system={systemKey} period={monthKey} slot={field} size={64} />
+                      ) : (
+                        <span className="only-screen text-xs text-slate-300">Ruang tanda tangan</span>
+                      )}
+                    </div>
                     {nama ? (
-                      <VerifyQR type="reportHasil" system={systemKey} period={monthKey} slot={field} size={68} />
+                      <div className="space-y-0.5 text-center">
+                        <p className="font-bold text-slate-800 text-xs">{nama}</p>
+                        <p className="text-[10px] text-slate-400">{tanggal ? fullDateID(tanggal) : ""}</p>
+                      </div>
+                    ) : field === "diperiksa" && !analis.nama ? (
+                      <p className="no-print text-center text-xs text-slate-400 italic">{disabledNote}</p>
+                    ) : fieldCanApprove ? (
+                      <button onClick={onApprove} disabled={saving || approving}
+                        className="no-print inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 shadow-xs transition">
+                        {(saving || approving) ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />} Setujui &amp; Tanda Tangani
+                      </button>
                     ) : (
-                      <span className="only-screen text-xs text-slate-300">Ruang tanda tangan</span>
+                      <p className="no-print text-center text-xs text-slate-400 italic">{disabledNote}</p>
                     )}
                   </div>
-                  {nama ? (
-                    <div className="space-y-1 text-sm">
-                      <p className="font-semibold text-slate-700">{nama}</p>
-                      <p className="text-xs text-slate-400">{tanggal ? fullDateID(tanggal) : ""}</p>
-                    </div>
-                  ) : field === "diperiksa" && !analis.nama ? (
-                    <p className="no-print inline-flex items-center gap-1.5 text-xs text-slate-400"><Lock size={12} /> {disabledNote}</p>
-                  ) : fieldCanApprove ? (
-                    <button onClick={onApprove} disabled={saving || approving}
-                      className="no-print inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
-                      {(saving || approving) ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Setujui &amp; Tanda Tangani
-                    </button>
-                  ) : (
-                    <p className="no-print inline-flex items-center gap-1.5 text-xs text-slate-400"><Lock size={12} /> {disabledNote}</p>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
-          </div>
         </div>
       )}
     </div>
   );
 }
 
-/* ========================================================================= LEGEND */
-function LegendRow() {
-  const items = [
-    { label: "Terkendali", bg: "#dcfce7", color: "#15803d" },
-    { label: "Alert", bg: "#fef3c7", color: "#b45309" },
-    { label: "Action", bg: "#ffedd5", color: "#c2410c" },
-    { label: "Melebihi Syarat", bg: "#fee2e2", color: "#b91c1c" },
-    { label: "N/A / Belum diuji", bg: "#f1f5f9", color: "#64748b" },
-  ];
-  return (
-    <div className="flex flex-wrap gap-3 text-xs">
-      {items.map((it) => (
-        <span key={it.label} className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: it.bg, border: `1px solid ${it.color}` }} />
-          <span className="text-slate-600">{it.label}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function emptyNarrative() {
-  return { pendahuluan: "", perParameter: {}, reviewTren: "", kesimpulan: "" };
-}
-function emptySignoff() {
-  return { dinilai: { nama: "", jabatan: "", tanggal: "" }, diperiksa: { nama: "", jabatan: "", tanggal: "" } };
-}
-
-/* ========================================================================= KONTROL MINGGUAN (Nomor Kontrol Media/Bakteri + Kontrol Positif/Negatif) */
-// Diisi 1x per minggu (bukan per baris data POU). Defaultnya SATU nomor yang
-// sama otomatis berlaku untuk semua sistem minggu itu; kalau minggu tertentu
-// nomornya beda untuk sistem ini saja, centang "Khusus sistem ini".
-function emptyKontrolFields() {
-  return {
-    noKontrolMedia: "", noKontrolBakteri: "", kontrolPositif: "", kontrolNegatif: "",
-    kontrolNegatifLAL: "", kontrolPositifLAL: "", noBetLAL: "", noBetCSE: "", sensitivitasLAL: "", sensitivitasCSE: "",
-  };
-}
-
-function kontrolFieldsFrom(rec) {
-  const f = emptyKontrolFields();
-  Object.keys(f).forEach((k) => { f[k] = rec?.[k] || ""; });
-  return f;
-}
-
-// Default diisi 1x per BULAN dan otomatis berlaku untuk seluruh minggu bulan
-// itu — TAPI HANYA untuk fasilitas (sistem) ini sendiri. Fasilitas lain yang
-// looping di bulan yang sama tetap wajib mengisi Default-nya masing-masing
-// (walau angkanya kebetulan sama). Kalau ada minggu tertentu yang perlu
-// dibedakan lagi, tambahkan sebagai "pengecualian" dengan memilih minggu ke
-// berapa yang mau diganti — pengecualian ini menang dari Default untuk
-// minggu itu saja.
-function KontrolMingguanPanel({ systemKey, jenis, monthKey, entries, records, canInput, saving, onSave }) {
-  const isWFIType = jenis === "WFI" || jenis === "Pure Steam";
-  const defaultWeekKey = monthDefaultWeekKey(monthKey);
-
-  const weeks = useMemo(() => {
-    const map = new Map();
-    entries.forEach((e) => {
-      if (!e.tanggal) return;
-      const wk = weekKeyForISO(e.tanggal);
-      if (wk && !map.has(wk.key)) map.set(wk.key, wk);
-    });
-    return Array.from(map.values()).sort((a, b) => (a.year - b.year) || (a.month - b.month) || (a.weekNum - b.weekNum));
-  }, [entries]);
-
-  // Inisialisasi LANGSUNG dari props saat komponen ini dipasang (mount) —
-  // bukan lewat useEffect + flag "sudah dimuat" (itu yang sebelumnya bikin
-  // data kadang tidak muncul lagi setelah balik dari halaman print: begitu
-  // flag itu keburu "true", data baru dari server tidak pernah disinkron
-  // ulang). Karena panel ini betul-betul dipasang ulang (unmount lalu mount
-  // lagi) tiap kali pindah dari/ke halaman Formulir QC, initializer ini akan
-  // selalu jalan dengan data terbaru yang sudah dimuat SystemDetail.
-  const [defaultRow, setDefaultRow] = useState(() => {
-    const rec = records.find((r) => r.weekKey === defaultWeekKey && r.system === systemKey);
-    return kontrolFieldsFrom(rec);
-  });
-
-  const [exceptions, setExceptions] = useState(() => {
-    const prefix = monthKey + "-W";
-    const init = {};
-    records.forEach((r) => {
-      if (r.weekKey.indexOf(prefix) !== 0) return;
-      if (r.weekKey === defaultWeekKey) return; // itu Default, bukan pengecualian
-      if (r.system !== systemKey) return;
-      init[r.weekKey] = kontrolFieldsFrom(r);
-    });
-    return init;
-  });
-
-  const [addWeekKey, setAddWeekKey] = useState("");
-  const [pendingClears, setPendingClears] = useState([]);
-
-  function updateDefault(patch) {
-    setDefaultRow((prev) => ({ ...prev, ...patch }));
-  }
-
-  function updateException(weekKey, patch) {
-    setExceptions((prev) => ({ ...prev, [weekKey]: { ...prev[weekKey], ...patch } }));
-  }
-
-  function addException() {
-    if (!addWeekKey) return;
-    setExceptions((prev) => ({ ...prev, [addWeekKey]: { ...defaultRow } }));
-    setAddWeekKey("");
-  }
-
-  function removeException(weekKey) {
-    setExceptions((prev) => {
-      const { [weekKey]: _removed, ...rest } = prev;
-      return rest;
-    });
-    setPendingClears((prev) => [...prev, weekKey]);
-  }
-
-  const exceptionWeekKeys = Object.keys(exceptions).sort();
-  const addableWeeks = weeks.filter((wk) => !exceptions[wk.key]);
-
-  function handleSaveAll() {
-    const out = [{ weekKey: defaultWeekKey, system: systemKey, ...defaultRow }];
-    exceptionWeekKeys.forEach((weekKey) => {
-      out.push({ weekKey, system: systemKey, ...kontrolFieldsFrom(exceptions[weekKey]) });
-    });
-    // Pengecualian yang barusan dihapus di layar -> kosongkan juga di server
-    // (bukan cuma disembunyikan di layar) supaya minggu itu betul-betul
-    // kembali mengikuti Default, bukan nyangkut ke data lama yang basi.
-    pendingClears.forEach((weekKey) => out.push({ weekKey, system: systemKey, ...emptyKontrolFields() }));
-    onSave(out);
-    setPendingClears([]);
-  }
-
-  function renderFieldInputs(row, onPatch) {
-    return (
-      <>
-        <td className="px-3 py-2">
-          <input type="text" disabled={!canInput} value={row.noKontrolMedia || ""} placeholder="-"
-            onChange={(ev) => onPatch({ noKontrolMedia: ev.target.value })}
-            className="w-28 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" />
-        </td>
-        <td className="px-3 py-2">
-          <input type="text" disabled={!canInput} value={row.noKontrolBakteri || ""} placeholder="-"
-            onChange={(ev) => onPatch({ noKontrolBakteri: ev.target.value })}
-            className="w-28 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" />
-        </td>
-        <td className="px-3 py-2">
-          <select disabled={!canInput} value={row.kontrolPositif || ""} onChange={(ev) => onPatch({ kontrolPositif: ev.target.value })}
-            className="w-28 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50">
-            <option value="">-</option>
-            {QUALI_OPTIONS.kontrolPositif.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </td>
-        <td className="px-3 py-2">
-          <select disabled={!canInput} value={row.kontrolNegatif || ""} onChange={(ev) => onPatch({ kontrolNegatif: ev.target.value })}
-            className="w-28 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50">
-            <option value="">-</option>
-            {QUALI_OPTIONS.kontrolNegatif.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </td>
-        {isWFIType && (
-          <>
-            <td className="px-3 py-2">
-              <select disabled={!canInput} value={row.kontrolNegatifLAL || ""} onChange={(ev) => onPatch({ kontrolNegatifLAL: ev.target.value })}
-                className="w-28 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50">
-                <option value="">-</option>
-                {QUALI_OPTIONS.kontrolNegatif.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </td>
-            <td className="px-3 py-2">
-              <select disabled={!canInput} value={row.kontrolPositifLAL || ""} onChange={(ev) => onPatch({ kontrolPositifLAL: ev.target.value })}
-                className="w-28 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50">
-                <option value="">-</option>
-                {QUALI_OPTIONS.kontrolPositif.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </td>
-            <td className="px-3 py-2">
-              <input type="text" disabled={!canInput} value={row.noBetLAL || ""} placeholder="-"
-                onChange={(ev) => onPatch({ noBetLAL: ev.target.value })}
-                className="w-24 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" />
-            </td>
-            <td className="px-3 py-2">
-              <input type="text" disabled={!canInput} value={row.noBetCSE || ""} placeholder="-"
-                onChange={(ev) => onPatch({ noBetCSE: ev.target.value })}
-                className="w-24 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" />
-            </td>
-            <td className="px-3 py-2">
-              <input type="text" disabled={!canInput} value={row.sensitivitasLAL || ""} placeholder="-"
-                onChange={(ev) => onPatch({ sensitivitasLAL: normalizeNumericInput(ev.target.value) })}
-                className="w-20 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" />
-            </td>
-            <td className="px-3 py-2">
-              <input type="text" disabled={!canInput} value={row.sensitivitasCSE || ""} placeholder="-"
-                onChange={(ev) => onPatch({ sensitivitasCSE: normalizeNumericInput(ev.target.value) })}
-                className="w-20 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" />
-            </td>
-          </>
-        )}
-      </>
-    );
-  }
-
-  return (
-    <div className="no-print mb-5 rounded-xl border border-slate-200 bg-white p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-bold text-slate-700">Kontrol Mingguan</h3>
-          <p className="text-xs text-slate-400">Nomor Kontrol Media/Bakteri &amp; hasil Kontrol Positif/Negatif{isWFIType ? " (mikrobiologi & LAL/Endotoksin)" : ""} — isi sekali untuk fasilitas ini, otomatis berlaku untuk seluruh bulan ini. Tambahkan pengecualian kalau ada minggu tertentu yang beda.</p>
-        </div>
-        {canInput && (
-          <button onClick={handleSaveAll} disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
-            {saving ? <Loader2 size={14} className="animate-spin" /> : null} Simpan Kontrol Mingguan
-          </button>
-        )}
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
-              <th className="px-3 py-2">Berlaku untuk</th>
-              <th className="px-3 py-2">No. Kontrol Media</th>
-              <th className="px-3 py-2">No. Kontrol Bakteri</th>
-              <th className="px-3 py-2">Kontrol Positif</th>
-              <th className="px-3 py-2">Kontrol Negatif</th>
-              {isWFIType && (
-                <>
-                  <th className="px-3 py-2">Kontrol Negatif (LAL)</th>
-                  <th className="px-3 py-2">Kontrol Positif (LAL)</th>
-                  <th className="px-3 py-2">No Bet LAL</th>
-                  <th className="px-3 py-2">No Bet CSE</th>
-                  <th className="px-3 py-2">Sensitivitas LAL</th>
-                  <th className="px-3 py-2">Sensitivitas CSE</th>
-                </>
-              )}
-              <th className="px-3 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-b border-slate-100 bg-teal-50/40">
-              <td className="px-3 py-2 font-medium">Default — seluruh bulan ini<br /><span className="font-normal text-xs text-slate-400">(khusus fasilitas ini)</span></td>
-              {renderFieldInputs(defaultRow, updateDefault)}
-              <td className="px-3 py-2"></td>
-            </tr>
-            {exceptionWeekKeys.map((weekKey) => {
-              const row = exceptions[weekKey];
-              const wk = weeks.find((w) => w.key === weekKey);
-              return (
-                <tr key={weekKey} className="border-b border-slate-100 last:border-0">
-                  <td className="px-3 py-2 font-medium">{wk ? weekLabel(wk) : weekKey}</td>
-                  {renderFieldInputs(row, (patch) => updateException(weekKey, patch))}
-                  <td className="px-3 py-2 text-center">
-                    {canInput && (
-                      <button onClick={() => removeException(weekKey)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500" title="Hapus pengecualian (kembali ke default)">
-                        <Trash2 size={15} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {canInput && addableWeeks.length > 0 && (
-        <div className="mt-3 flex items-center gap-2 text-sm">
-          <select value={addWeekKey} onChange={(ev) => setAddWeekKey(ev.target.value)}
-            className="rounded border border-slate-200 px-2 py-1.5 text-sm">
-            <option value="">-- Pilih minggu untuk dikecualikan --</option>
-            {addableWeeks.map((wk) => <option key={wk.key} value={wk.key}>{weekLabel(wk)}</option>)}
-          </select>
-          <button onClick={addException} disabled={!addWeekKey}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-            <Plus size={14} /> Tambah Pengecualian Minggu
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-/* ========================================================================= SYSTEM DETAIL (halaman Pengkajian SPA) */
+/* =========================================================================
+   13. SYSTEM DETAIL (PENGKAJIAN QA TREN AIR)
+   ========================================================================= */
 function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, session, token }) {
   const system = SYSTEMS.find((s) => s.key === systemKey);
   const params = PARAMS_BY_JENIS[system.jenis] || [];
@@ -1444,7 +1793,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   const isTamu = session?.role === "Tamu";
   const isQA = isAdmin || (!isTamu && session?.departemen === "QA");
   const isQC = isAdmin || (!isTamu && session?.departemen === "QC");
-  const [mode, setMode] = useState("pengkajian"); // 'pengkajian' | 'reportHasil'
+  const [mode, setMode] = useState("pengkajian");
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -1488,7 +1837,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           setSignoff(emptySignoff());
         }
       } catch (err) {
-        if (!cancelled) setLoadError("Gagal memuat data dari spreadsheet: " + err.message);
+        if (!cancelled) setLoadError("Gagal memuat data: " + err.message);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1497,25 +1846,14 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     return () => { cancelled = true; };
   }, [systemKey, monthKey]);
 
-  // Formulir QC (Report_Hasil) sudah final di-acc Supervisor/Manager QC?
   const qcFinalApproved = !!reportHasilMeta?.diperiksa?.nama;
-  // Pengkajian (narasi QA) sudah final di-acc Manager QA ("Mengetahui")?
-  // Begitu ini true, seluruh data (entri, kontrol mingguan, formulir QC,
-  // narasi) jadi arsip terkunci — hanya Administrator yang masih bisa ubah/hapus.
   const pengkajianFinalized = !!signoff?.diperiksa?.nama;
   const recordsLocked = !isAdmin && pengkajianFinalized;
 
-  // QC (Staff-Manager QC) & QA (Supervisor/Manager QA, membantu input) boleh
-  // isi/hapus data SELAMA formulir QC belum final di-acc & pengkajian belum
-  // final — begitu salah satu sudah final, data dianggap selesai/terkunci.
   const canInputQC = isAdmin || (!recordsLocked && !qcFinalApproved && (hasAccess(session, "Staff", "QC") || hasAccess(session, "Supervisor", "QA")));
   const canDeleteQC = isAdmin || (!recordsLocked && !qcFinalApproved && (hasAccess(session, "Supervisor", "QC") || hasAccess(session, "Supervisor", "QA")));
-  // QA baru boleh mulai menyusun pengkajian SETELAH formulir QC selesai final
-  // di-acc oleh Supervisor/Manager QC (Administrator boleh kapan saja).
   const canEditQA = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Supervisor", "QA"));
   const canApproveFinal = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Manager", "QA"));
-  // Tamu (login) & siapa pun yang login boleh lihat pembahasan/pengkajian
-  // lengkap; publik tanpa login hanya boleh lihat data hasil pengujian mentah.
   const canViewPembahasan = !!session;
   const canPrint = hasAccess(session, "Staff");
 
@@ -1528,9 +1866,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         setNarrative({ ...emptyNarrative(), ...rep.narrative });
         setSignoff(rep.signoff || emptySignoff());
       }
-    } catch {
-      // biarkan, bukan blocking error
-    }
+    } catch {}
   }, [systemKey, monthKey]);
 
   const saveEntriesOnly = useCallback(async () => {
@@ -1610,9 +1946,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     try {
       const prevRes = await fetchEntries(systemKey, prevMonthKey(monthKey));
       prevEntries = prevRes || [];
-    } catch {
-      // biarkan kosong — reviewTren akan otomatis menjelaskan belum ada data pembanding
-    }
+    } catch {}
     const localRes = generateLocalNarrative({
       systemLabel: system.label, jenisAir: system.jenis, monthLabel: monthLabel(monthKey), entries, prevEntries,
     });
@@ -1634,9 +1968,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       try {
         const prevRep = await fetchReport(systemKey, prevMonthKey(monthKey));
         if (prevRep.found) prevSummary = prevRep.narrative?.kesimpulan || "Ada data periode sebelumnya, namun tanpa ringkasan tertulis.";
-      } catch {
-        // biarkan default
-      }
+      } catch {}
       const parsed = await generateNarrative({
         systemLabel: system.label, jenisAir: system.jenis, monthLabel: monthLabel(monthKey), stats, prevStats, prevSummary,
       });
@@ -1651,22 +1983,22 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         perParameter: { ...prev.perParameter, ...localRes.perParameter },
         reviewTren: localRes.reviewTren, kesimpulan: localRes.kesimpulan,
       }));
-      setAiError("AI gagal merespons, dipakai narasi otomatis dari data sebagai gantinya. Detail error: " + err.message);
+      setAiError("AI gagal merespons, dipakai narasi otomatis lokal.");
     } finally {
       setGenerating(false);
     }
   }
 
   if (loading) {
-    return <div className="flex h-64 items-center justify-center text-slate-400"><Loader2 className="mr-2 animate-spin" size={18} /> Memuat data dari spreadsheet...</div>;
+    return <div className="flex h-64 items-center justify-center text-slate-400"><Loader2 className="mr-2 animate-spin" size={18} /> Memuat data...</div>;
   }
   if (loadError) {
     return (
       <div className="mx-auto max-w-2xl p-6">
-        <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
+        <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800">
           <ChevronLeft size={16} /> Kembali ke Dashboard
         </button>
-        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{loadError}</p>
+        <p className="rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200">{loadError}</p>
       </div>
     );
   }
@@ -1684,88 +2016,72 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   }
 
   return (
-    <div className="mx-auto max-w-5xl p-6 print:max-w-none print:p-0" data-print-blocked={!canPrint}>
-      <div className="print-blocked-notice">Akses print/download PDF dibatasi untuk akun Staff/Supervisor/Manager ke atas. Silakan login dengan akun yang sesuai.</div>
-      <div className="no-print mb-4 flex items-center justify-between">
-        <button onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
-          <ChevronLeft size={16} /> Kembali ke Dashboard
+    <div className="space-y-6" data-print-blocked={!canPrint}>
+      <div className="print-blocked-notice">Akses print dibatasi untuk Staff/Supervisor/Manager ke atas.</div>
+      <div className="no-print flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200/80 shadow-2xs">
+        <button onClick={onBack} className="inline-flex items-center gap-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 text-xs font-bold transition shadow-2xs">
+          <ArrowLeft size={14} className="text-teal-900" /> Kembali ke Dashboard
         </button>
-        <div className="flex items-center gap-2">
-          <input type="month" value={monthKey} onChange={(ev) => setMonthKey(ev.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm" />
+        <div className="flex flex-wrap items-center gap-2">
           {(isQC || isQA) && (
-            <button onClick={() => setMode("reportHasil")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              <Printer size={15} /> {isQC ? "Report Hasil Pemeriksaan" : "Lihat Formulir QC"}
+            <button onClick={() => setMode("reportHasil")} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-50 hover:bg-teal-100/80 border border-teal-200/80 text-teal-950 px-3.5 py-2 text-xs font-bold transition shadow-2xs">
+              <FileCheck2 size={14} className="text-teal-800" /> {isQC ? "Report Hasil Pemeriksaan" : "Lihat Formulir QC"}
             </button>
           )}
           {isQA && canPrint && (
-            <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              <Printer size={15} /> Download / Print PDF
+            <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-900 hover:bg-teal-950 text-white px-3.5 py-2 text-xs font-semibold transition shadow-xs">
+              <Printer size={14} className="text-teal-300" /> Download / Print PDF
             </button>
           )}
         </div>
       </div>
 
-      <div className="mb-5 overflow-hidden rounded-xl border border-slate-200 print-card">
-        <div className="bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-5 py-4">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-            <div className="flex items-start gap-3">
-              <img src="/logo-rama.png" alt="Logo PT. Rama Emerald Multi Sukses" className="h-12 w-12 shrink-0 object-contain brightness-0 invert" />
+      <div className="overflow-hidden rounded-3xl border border-slate-200/80 print-card shadow-sm">
+        <div className="relative overflow-hidden bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-6 py-4">
+          <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-teal-400/20 blur-3xl" />
+          <div className="relative flex items-start justify-between">
+            <div className="flex items-start gap-4">
+              <img src="/logo-rama.png" alt="Logo" className="h-11 w-11 object-contain brightness-0 invert" />
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-teal-300">PT. Rama Emerald Multi Sukses — QA</p>
-                <h2 className="text-xl font-bold text-white">Pengkajian Trend Data Sistem Pengolahan Air (SPA)</h2>
-                <p className="text-sm text-teal-100">
-                  Sistem: <span className="font-medium text-white">{system.label}</span> · Periode: <span className="font-medium text-white">{monthLabel(monthKey)}</span>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-300">PT. Rama Emerald Multi Sukses — QA</p>
+                <h2 className="text-lg font-bold text-white tracking-tight">Pengkajian Trend Data Sistem Pengolahan Air (SPA)</h2>
+                <p className="text-xs text-teal-100/90 mt-0.5">
+                  Sistem: <span className="font-semibold text-white">{system.label}</span> · Periode: <span className="font-semibold text-white">{monthLabel(monthKey)}</span>
                 </p>
               </div>
             </div>
-            <p className="shrink-0 text-xs font-medium text-teal-100 sm:text-right">No. Formulir: <span className="text-white">QA.FM.156</span></p>
+            <p className="text-right text-[11px] text-teal-200 font-mono">QA.FM.156</p>
           </div>
         </div>
-        <div className="flex items-center justify-between bg-white px-5 py-3">
-          <span className="text-xs text-slate-400">Status keseluruhan periode ini</span>
+        <div className="flex items-center justify-between bg-white px-6 py-2.5 border-t border-slate-100 text-xs">
+          <span className="text-slate-400 font-medium">Status Keseluruhan Sistem:</span>
           <StatusPill level={overallLevel} hasData={entries.length > 0} />
         </div>
       </div>
 
-      {saveError && <p className="no-print mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{saveError}</p>}
+      {saveError && <p className="no-print rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200">{saveError}</p>}
 
-      {!session && (
-        <div className="no-print mb-4 rounded-lg bg-teal-50 px-4 py-2.5 text-sm text-teal-700">
-          Anda melihat mode publik — hanya data hasil pengujian mentah. Login untuk melihat grafik, pembahasan, dan pengkajian lengkap.
-        </div>
-      )}
-      {session && recordsLocked && (
-        <div className="no-print mb-4 flex items-center gap-1.5 rounded-lg bg-slate-100 px-4 py-2.5 text-sm text-slate-600">
-          <Lock size={14} /> Pengkajian periode ini sudah final (disetujui) — data terkunci, hanya Administrator yang bisa mengubah/menghapus.
-        </div>
-      )}
-      {session && !recordsLocked && !qcFinalApproved && !isQC && isQA && (
-        <div className="no-print mb-4 flex items-center gap-1.5 rounded-lg bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
-          <Lock size={14} /> Formulir QC belum final disetujui Supervisor/Manager QC — pengkajian baru bisa disusun setelah itu selesai.
-        </div>
-      )}
-
-      <div className="no-print mb-5">
+      <div className="no-print">
         <EntryEditor system={system} masterPoints={masterPoints} entries={entries} setEntries={setEntries} onSave={saveEntriesOnly} saving={saving}
           canInput={canInputQC} canDeleteExisting={canDeleteQC}
           accessNote={
             !session ? "Login untuk mengisi data"
-            : recordsLocked ? "Pengkajian sudah final — data terkunci (hanya Administrator)"
-            : qcFinalApproved ? "Formulir QC sudah final di-acc — data terkunci (hanya Administrator)"
-            : "Staff/Supervisor/Manager QC atau Supervisor/Manager QA yang bisa mengisi data"
+            : recordsLocked ? "Pengkajian sudah final — data terkunci"
+            : qcFinalApproved ? "Formulir QC sudah final di-acc — data terkunci"
+            : "Staff/Supervisor/Manager QC atau QA yang bisa mengisi data"
           } />
       </div>
 
-      {kontrolError && <p className="no-print mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{kontrolError}</p>}
+      {kontrolError && <p className="no-print rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200">{kontrolError}</p>}
       <KontrolMingguanPanel systemKey={systemKey} jenis={system.jenis} monthKey={monthKey} entries={entries} records={kontrolRecords}
         canInput={canInputQC} saving={kontrolSaving} onSave={handleSaveKontrolMingguan} />
 
-      <div className="mb-5 rounded-xl border border-slate-200 bg-white p-5 print-card">
-        <h3 className="mb-3 text-sm font-bold text-slate-700">Persyaratan</h3>
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
+        <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Persyaratan Mutu &amp; Batas Limit</h3>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
+              <tr className="border-b border-slate-200 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50">
                 <th className="px-3 py-2">Parameter</th>
                 <th className="px-3 py-2 text-right">Syarat</th><th className="px-3 py-2 text-right">Alert Limit</th><th className="px-3 py-2 text-right">Action Limit</th>
               </tr>
@@ -1776,11 +2092,11 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
                 const limit = getLimit(p, system.jenis);
                 if (limit.qualitative) {
                   return (
-                    <tr key={p} className="border-b border-slate-100 last:border-0">
-                      <td className="px-3 py-1.5">{meta.short}</td>
-                      <td className="px-3 py-1.5 text-right">{limit.passValue}</td>
-                      <td className="px-3 py-1.5 text-right">-</td>
-                      <td className="px-3 py-1.5 text-right">-</td>
+                    <tr key={p} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                      <td className="px-3 py-2 font-medium">{meta.short}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-slate-800">{limit.passValue}</td>
+                      <td className="px-3 py-2 text-right text-slate-400">-</td>
+                      <td className="px-3 py-2 text-right text-slate-400">-</td>
                     </tr>
                   );
                 }
@@ -1788,147 +2104,142 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
                 const alert = limit.alertMin !== undefined ? `≤${limit.alertMin} / ≥${limit.alertMax}` : `≥ ${limit.alertMax}`;
                 const action = limit.actionMin !== undefined ? `≤${limit.actionMin} / ≥${limit.actionMax}` : `≥ ${limit.actionMax}`;
                 return (
-                  <tr key={p} className="border-b border-slate-100 last:border-0">
-                    <td className="px-3 py-1.5">{meta.short}{meta.unit ? ` (${meta.unit})` : ""}</td>
-                    <td className="px-3 py-1.5 text-right">{syarat}</td>
-                    <td className="px-3 py-1.5 text-right">{alert}</td>
-                    <td className="px-3 py-1.5 text-right">{action}</td>
+                  <tr key={p} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                    <td className="px-3 py-2 font-medium">{meta.short}{meta.unit ? ` (${meta.unit})` : ""}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-800">{syarat}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-amber-700">{alert}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-orange-700">{action}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <div className="mt-3"><LegendRow /></div>
+        <div className="mt-3.5 pt-2 border-t border-slate-100"><LegendRow /></div>
       </div>
 
       {canViewPembahasan ? (
-      <>
-      <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold text-slate-700">Pembahasan &amp; Narasi</h3>
-        {canEditQA ? (
-          <div className="flex gap-2">
-            <button onClick={() => handleGenerateNarrative(false)} disabled={generating || entries.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-              {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              Buat Narasi dari Data
-            </button>
-            <button onClick={() => handleGenerateNarrative(true)} disabled={generating || entries.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">
-              {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {generating ? "Menyusun narasi..." : "Buat Narasi dengan AI"}
-            </button>
-          </div>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
-            <Lock size={12} />
-            {recordsLocked ? "Pengkajian sudah final — terkunci"
-              : !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC"
-              : "Hanya Supervisor/Manager QA yang bisa menyusun narasi"}
-          </span>
-        )}
-      </div>
-      {aiError && <p className="no-print mb-3 text-sm text-red-600">{aiError}</p>}
-
-      <div className="mb-5 rounded-xl border border-slate-200 bg-white p-5 print-card">
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Pendahuluan</label>
-        <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none"
-          rows={4} value={narrative.pendahuluan} onChange={(ev) => setNarrative({ ...narrative, pendahuluan: ev.target.value })} readOnly={!canEditQA} />
-      </div>
-
-      <div className="mb-5 space-y-4">
-        {params.map((p) => (
-          <div key={p} className="overflow-hidden rounded-xl border border-slate-200 bg-white print-card">
-            <div className="p-4"><ParamValueTable entries={entries} paramKey={p} jenis={system.jenis} /></div>
-            {!getLimit(p, system.jenis).qualitative && <div className="px-4 pb-4"><ParamChart entries={entries} paramKey={p} systemLabel={system.label} jenis={system.jenis} /></div>}
-            <div className="border-t border-slate-100 p-4 avoid-break">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Hasil &amp; Tren {PARAM_META[p].short}
-              </label>
-              <AutoTextarea
-                className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                rows={6}
-                value={narrative.perParameter[p] || ""}
-                placeholder={`Tulis ulasan hasil dan tren untuk ${PARAM_META[p].short}...`}
-                onChange={(ev) => setNarrative({ ...narrative, perParameter: { ...narrative.perParameter, [p]: ev.target.value } })}
-                readOnly={!canEditQA}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {(narrative.reviewTren || canEditQA) && (
-        <div className="mb-5 rounded-xl border border-slate-200 bg-white p-5 print-card">
-          <h3 className="mb-3 text-sm font-bold text-slate-700">Review Tren (dibanding periode sebelumnya)</h3>
-          <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none"
-            rows={6} placeholder="Opsional — isi kalau ada data periode sebelumnya untuk dibandingkan."
-            value={narrative.reviewTren} onChange={(ev) => setNarrative({ ...narrative, reviewTren: ev.target.value })} readOnly={!canEditQA} />
-        </div>
-      )}
-
-      <div className="mb-5 rounded-xl border border-slate-200 bg-white p-5 print-card">
-        <h3 className="mb-3 text-sm font-bold text-slate-700">Kesimpulan</h3>
-        <AutoTextarea className="w-full rounded-lg border border-slate-200 p-2.5 text-sm text-slate-700 focus:border-teal-400 focus:outline-none"
-          rows={8} value={narrative.kesimpulan} onChange={(ev) => setNarrative({ ...narrative, kesimpulan: ev.target.value })} readOnly={!canEditQA} />
-      </div>
-
-      <div className="mb-8 rounded-xl border border-slate-200 bg-white p-5 print-card">
-        <h3 className="mb-3 text-sm font-bold text-slate-700">Tanda Tangan</h3>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {[
-            { field: "dinilai", label: "Dikaji Oleh", canApprove: canEditQA, onApprove: handleApproveDikaji,
-              disabledNote: !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC" : "Hanya Supervisor/Manager QA yang bisa menyetujui" },
-            { field: "diperiksa", label: "Mengetahui", canApprove: canApproveFinal, onApprove: handleApproveMengetahui,
-              disabledNote: !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC" : signoff.dinilai?.nama ? "Hanya Manager QA yang bisa menyetujui final" : "Menunggu approval \"Dikaji Oleh\" terlebih dahulu" },
-          ].map(({ field, label, canApprove, onApprove, disabledNote }) => (
-            <div key={field} className="rounded-lg border border-slate-200 p-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-              <div className="mb-3 flex h-24 items-center justify-center rounded border border-dashed border-slate-300 print:h-28">
-                {signoff[field]?.nama ? (
-                  <VerifyQR type="pengkajian" system={systemKey} period={monthKey} slot={field} size={68} />
-                ) : (
-                  <span className="only-screen text-xs text-slate-300">Ruang tanda tangan</span>
-                )}
-              </div>
-              {signoff[field]?.nama ? (
-                <div className="space-y-1 text-sm">
-                  <p className="font-semibold text-slate-700">{signoff[field].nama}</p>
-                  <p className="text-slate-500">{signoff[field].jabatan}</p>
-                  <p className="text-xs text-slate-400">{signoff[field].tanggal ? fullDateID(signoff[field].tanggal) : ""}</p>
-                </div>
-              ) : canApprove ? (
-                <button onClick={onApprove} disabled={approving || (field === "diperiksa" && !signoff.dinilai?.nama)}
-                  className="no-print inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
-                  {approving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Setujui &amp; Tanda Tangani
+        <>
+          <div className="no-print flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Pembahasan &amp; Narasi Evaluasi</h3>
+            {canEditQA && (
+              <div className="flex gap-2">
+                <button onClick={() => handleGenerateNarrative(false)} disabled={generating || entries.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 shadow-2xs">
+                  {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  Draf Lokal
                 </button>
-              ) : (
-                <p className="no-print inline-flex items-center gap-1.5 text-xs text-slate-400"><Lock size={12} /> {disabledNote}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+                <button onClick={() => handleGenerateNarrative(true)} disabled={generating || entries.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 shadow-xs">
+                  {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  Generate AI
+                </button>
+              </div>
+            )}
+          </div>
+          {aiError && <p className="no-print text-xs text-red-600 bg-red-50 p-3 rounded-xl border border-red-200">{aiError}</p>}
 
-      {canEditQA && (
-        <div className="no-print mb-8 flex justify-end">
-          <button onClick={saveNarrativeOnly} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
-            {saving ? <Loader2 size={15} className="animate-spin" /> : null} Simpan Narasi &amp; Pembahasan
-          </button>
-        </div>
-      )}
-      </>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs space-y-2">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">Pendahuluan</label>
+            <AutoTextarea className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-700 focus:border-teal-700 focus:outline-none leading-relaxed"
+              rows={3} value={narrative.pendahuluan} onChange={(ev) => setNarrative({ ...narrative, pendahuluan: ev.target.value })} readOnly={!canEditQA} />
+          </div>
+
+          <div className="space-y-4">
+            {params.map((p) => (
+              <div key={p} className="overflow-hidden rounded-3xl border border-slate-200 bg-white print-card shadow-xs">
+                <div className="p-4"><ParamValueTable entries={entries} paramKey={p} jenis={system.jenis} /></div>
+                {!getLimit(p, system.jenis).qualitative && <div className="px-4 pb-4"><ParamChart entries={entries} paramKey={p} systemLabel={system.label} jenis={system.jenis} /></div>}
+                <div className="border-t border-slate-100 p-4 avoid-break bg-slate-50/40">
+                  <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Hasil &amp; Tren {PARAM_META[p].short}
+                  </label>
+                  <AutoTextarea
+                    className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-700 bg-white focus:border-teal-700 focus:outline-none leading-relaxed"
+                    rows={4}
+                    value={narrative.perParameter[p] || ""}
+                    placeholder={`Tulis ulasan hasil dan tren untuk ${PARAM_META[p].short}...`}
+                    onChange={(ev) => setNarrative({ ...narrative, perParameter: { ...narrative.perParameter, [p]: ev.target.value } })}
+                    readOnly={!canEditQA}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {(narrative.reviewTren || canEditQA) && (
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Review Tren (vs Periode Sebelumnya)</h3>
+              <AutoTextarea className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-700 focus:border-teal-700 focus:outline-none leading-relaxed"
+                rows={4} placeholder="Opsional — perbandingan dengan data periode sebelumnya."
+                value={narrative.reviewTren} onChange={(ev) => setNarrative({ ...narrative, reviewTren: ev.target.value })} readOnly={!canEditQA} />
+            </div>
+          )}
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Kesimpulan Akhir</h3>
+            <AutoTextarea className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-700 focus:border-teal-700 focus:outline-none leading-relaxed"
+              rows={5} value={narrative.kesimpulan} onChange={(ev) => setNarrative({ ...narrative, kesimpulan: ev.target.value })} readOnly={!canEditQA} />
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs">
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Persetujuan &amp; Pengesahan (QA)</h3>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {[
+                { field: "dinilai", label: "Dikaji Oleh", canApprove: canEditQA, onApprove: handleApproveDikaji,
+                  disabledNote: !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC" : "Hanya Supervisor/Manager QA yang bisa menyetujui" },
+                { field: "diperiksa", label: "Mengetahui", canApprove: canApproveFinal, onApprove: handleApproveMengetahui,
+                  disabledNote: !qcFinalApproved ? "Menunggu Formulir QC di-acc Supervisor/Manager QC" : signoff.dinilai?.nama ? "Hanya Manager QA yang bisa menyetujui final" : "Menunggu approval \"Dikaji Oleh\" terlebih dahulu" },
+              ].map(({ field, label, canApprove, onApprove, disabledNote }) => (
+                <div key={field} className="rounded-2xl border border-slate-200 p-3.5 bg-slate-50/50 flex flex-col justify-between min-h-[140px]">
+                  <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">{label}</p>
+                  <div className="mb-2 flex h-20 items-center justify-center rounded-xl border border-dashed border-slate-300">
+                    {signoff[field]?.nama ? (
+                      <VerifyQR type="pengkajian" system={systemKey} period={monthKey} slot={field} size={64} />
+                    ) : (
+                      <span className="only-screen text-xs text-slate-300">Ruang tanda tangan</span>
+                    )}
+                  </div>
+                  {signoff[field]?.nama ? (
+                    <div className="space-y-0.5 text-center">
+                      <p className="font-bold text-slate-800 text-xs">{signoff[field].nama}</p>
+                      <p className="text-[10px] text-slate-500 font-medium">{signoff[field].jabatan}</p>
+                      <p className="text-[9px] text-slate-400">{signoff[field].tanggal ? fullDateID(signoff[field].tanggal) : ""}</p>
+                    </div>
+                  ) : canApprove ? (
+                    <button onClick={onApprove} disabled={approving || (field === "diperiksa" && !signoff.dinilai?.nama)}
+                      className="no-print inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 shadow-xs transition">
+                      {approving ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />} Setujui &amp; Tanda Tangani
+                    </button>
+                  ) : (
+                    <p className="no-print text-center text-xs text-slate-400 italic">{disabledNote}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {canEditQA && (
+            <div className="no-print flex justify-end">
+              <button onClick={saveNarrativeOnly} disabled={saving} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60 shadow-xs">
+                {saving ? <Loader2 size={13} className="animate-spin" /> : null} Simpan Narasi &amp; Pembahasan
+              </button>
+            </div>
+          )}
+        </>
       ) : (
-        <div className="mb-8 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-          <Lock size={22} className="mx-auto mb-2 text-slate-300" />
-          <p className="text-sm text-slate-500">Grafik, pembahasan, dan pengkajian lengkap hanya bisa dilihat oleh akun yang sudah login.</p>
+        <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+          <Lock size={20} className="mx-auto mb-2 text-slate-300" />
+          <p className="text-xs text-slate-500">Grafik, pembahasan, dan pengkajian lengkap hanya bisa dilihat oleh akun yang sudah login.</p>
         </div>
       )}
     </div>
   );
 }
 
-/* ========================================================================= AUTH UI */
+/* =========================================================================
+   14. AUTH MODALS
+   ========================================================================= */
 function LoginModal({ onClose, onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -1950,26 +2261,30 @@ function LoginModal({ onClose, onLogin }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-teal-950/60 p-4 backdrop-blur-xs">
+      <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border border-slate-100">
         <div className="mb-4 flex items-center gap-2">
-          <Lock size={18} className="text-teal-700" />
-          <h3 className="text-base font-bold text-slate-800">Login SPA</h3>
+          <Lock size={18} className="text-teal-800" />
+          <h3 className="text-base font-bold text-slate-800">Login Sistem Pengolahan Air</h3>
         </div>
-        <form onSubmit={submit}>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Username</label>
-          <input autoFocus type="text" value={username} onChange={(ev) => setUsername(ev.target.value)}
-            className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Password</label>
-          <input type="password" value={password} onChange={(ev) => setPassword(ev.target.value)}
-            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
-          {error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Username</label>
+            <input autoFocus type="text" value={username} onChange={(ev) => setUsername(ev.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-700 focus:outline-none" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Password</label>
+            <input type="password" value={password} onChange={(ev) => setPassword(ev.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-700 focus:outline-none" />
+          </div>
+          {error && <p className="rounded-xl bg-red-50 p-2.5 text-xs text-red-600 border border-red-200">{error}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600">
               Batal
             </button>
             <button type="submit" disabled={submitting || !username || !password}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
+              className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-4 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60 shadow-sm">
               {submitting ? <Loader2 size={14} className="animate-spin" /> : null} Masuk
             </button>
           </div>
@@ -2011,41 +2326,46 @@ function ChangePasswordModal({ token, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center gap-2">
-          <Lock size={18} className="text-teal-700" />
-          <h3 className="text-base font-bold text-slate-800">Ganti Password</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-teal-950/60 p-4 backdrop-blur-xs">
+      <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border border-slate-100">
+        <div className="mb-4 flex items-center gap-2 border-b pb-3">
+          <KeyRound size={18} className="text-teal-800" />
+          <h3 className="text-sm font-bold text-slate-800">Ganti Password</h3>
         </div>
         {success ? (
           <div>
-            <p className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Password berhasil diganti.</p>
+            <p className="mb-4 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700 font-semibold text-center border border-emerald-200">Password berhasil diperbarui!</p>
             <div className="flex justify-end">
-              <button onClick={onClose} className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800">
+              <button onClick={onClose} className="rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900">
                 Tutup
               </button>
             </div>
           </div>
         ) : (
-          <form onSubmit={submit}>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Password Lama</label>
-            <input autoFocus type="password" value={oldPassword} onChange={(ev) => setOldPassword(ev.target.value)}
-              className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Password Baru</label>
-            <input type="password" value={newPassword} onChange={(ev) => setNewPassword(ev.target.value)}
-              className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Ulangi Password Baru</label>
-            <input type="password" value={confirmPassword} onChange={(ev) => setConfirmPassword(ev.target.value)}
-              className="mb-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-400 focus:outline-none" />
-            <p className="mb-4 text-xs text-slate-400">Minimal 6 karakter. Lupa password lama? Hubungi Administrator, bukan lewat form ini.</p>
-            {error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+          <form onSubmit={submit} className="space-y-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-500">Password Lama</label>
+              <input autoFocus type="password" value={oldPassword} onChange={(ev) => setOldPassword(ev.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-teal-700 focus:outline-none" />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-500">Password Baru</label>
+              <input type="password" value={newPassword} onChange={(ev) => setNewPassword(ev.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-teal-700 focus:outline-none" />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-500">Ulangi Password Baru</label>
+              <input type="password" value={confirmPassword} onChange={(ev) => setConfirmPassword(ev.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-teal-700 focus:outline-none" />
+            </div>
+            {error && <p className="p-2 bg-red-50 text-red-600 text-xs rounded-xl border border-red-200">{error}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600">
                 Batal
               </button>
               <button type="submit" disabled={submitting || !oldPassword || !newPassword || !confirmPassword}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
-                {submitting ? <Loader2 size={14} className="animate-spin" /> : null} Simpan Password Baru
+                className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60 shadow-xs">
+                {submitting ? <Loader2 size={13} className="animate-spin" /> : null} Simpan
               </button>
             </div>
           </form>
@@ -2055,7 +2375,6 @@ function ChangePasswordModal({ token, onClose }) {
   );
 }
 
-/* ========================================================================= TOP BAR */
 function ProfileModal({ session, onClose, onChangePasswordClick }) {
   const rows = [
     { label: "Username", value: session.username },
@@ -2064,27 +2383,32 @@ function ProfileModal({ session, onClose, onChangePasswordClick }) {
     { label: "Departemen", value: session.departemen },
   ];
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center gap-2">
-          <User size={18} className="text-teal-700" />
-          <h3 className="text-base font-bold text-slate-800">Profil Saya</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-teal-950/60 p-4 backdrop-blur-xs">
+      <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4">
+        <div className="flex items-center gap-3 border-b pb-3.5">
+          <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-800 flex items-center justify-center font-bold">
+            <User size={20} />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-800">Profil Pengguna</h3>
+            <p className="text-[11px] text-slate-400">Informasi akun aktif</p>
+          </div>
         </div>
-        <div className="mb-5 divide-y divide-slate-100 rounded-lg border border-slate-200">
+        <div className="space-y-2 text-xs">
           {rows.map((r) => (
-            <div key={r.label} className="flex items-center justify-between px-3 py-2.5 text-sm">
+            <div key={r.label} className="flex justify-between py-1.5 border-b border-slate-100">
               <span className="text-slate-400">{r.label}</span>
-              <span className="font-semibold text-slate-800">{r.value}</span>
+              <span className="font-bold text-slate-800">{r.value}</span>
             </div>
           ))}
         </div>
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-xl border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
             Tutup
           </button>
           <button onClick={() => { onClose(); onChangePasswordClick(); }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800">
-            <Lock size={14} /> Ganti Password
+            className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs">
+            <KeyRound size={13} /> Ganti Password
           </button>
         </div>
       </div>
@@ -2092,47 +2416,9 @@ function ProfileModal({ session, onClose, onChangePasswordClick }) {
   );
 }
 
-function TopBar({ session, onLoginClick, onLogout, onChangePasswordClick, view, setView }) {
-  const [showProfile, setShowProfile] = useState(false);
-  return (
-    <div className="no-print border-b border-slate-200 bg-white px-4 py-2.5">
-      <div className="mx-auto flex max-w-5xl items-center justify-between">
-        <button onClick={() => setView("dashboard")} className="flex items-center gap-2 text-sm font-bold text-slate-700">
-          <img src="/logo-rama.png" alt="Logo PT. Rama Emerald Multi Sukses" className="h-8 w-8 object-contain" />
-          SPA — PT. Rama Emerald Multi Sukses
-        </button>
-        <div className="flex items-center gap-2">
-          {session && hasAccess(session, "Supervisor") && (
-            <button onClick={() => setView("activity")}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${view === "activity" ? "bg-slate-800 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
-              <History size={14} /> Riwayat Aktivitas
-            </button>
-          )}
-          {session ? (
-            <>
-              <button onClick={() => setShowProfile(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200">
-                <User size={13} /> {session.nama} · {session.role} {session.departemen}
-              </button>
-              {showProfile && (
-                <ProfileModal session={session} onClose={() => setShowProfile(false)} onChangePasswordClick={onChangePasswordClick} />
-              )}
-              <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                <LogOut size={14} /> Keluar
-              </button>
-            </>
-          ) : (
-            <button onClick={onLoginClick} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800">
-              <LogIn size={14} /> Login
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ========================================================================= RIWAYAT AKTIVITAS */
+/* =========================================================================
+   15. AUDIT TRAIL / RIWAYAT AKTIVITAS
+   ========================================================================= */
 function ActivityLogPage({ token, onBack }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2148,50 +2434,60 @@ function ActivityLogPage({ token, onBack }) {
   }, [token]);
 
   return (
-    <div className="mx-auto max-w-5xl p-6">
-      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
-        <ChevronLeft size={16} /> Kembali ke Dashboard
-      </button>
-      <h2 className="mb-4 text-lg font-bold text-slate-800">Riwayat Aktivitas</h2>
+    <div className="space-y-4 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between">
+        <button onClick={onBack} className="text-xs font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition">
+          <ChevronLeft size={16} /> Kembali ke Dashboard
+        </button>
+      </div>
+
+      <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs">
+        <h2 className="text-base font-bold text-slate-800">Riwayat Aktivitas &amp; Audit Trail</h2>
+        <p className="text-xs text-slate-400">Rekam jejak seluruh aksi input, edit, dan persetujuan pengujian air</p>
+      </div>
+
       {loading ? (
-        <div className="flex h-40 items-center justify-center text-slate-400"><Loader2 className="mr-2 animate-spin" size={16} /> Memuat...</div>
+        <div className="flex justify-center p-12 text-slate-400"><Loader2 className="animate-spin" size={24} /></div>
       ) : error ? (
-        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+        <p className="rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200 font-semibold">{error}</p>
       ) : logs.length === 0 ? (
-        <p className="py-10 text-center text-sm text-slate-400">Belum ada aktivitas tercatat.</p>
+        <div className="p-12 text-center bg-white rounded-3xl border border-dashed border-slate-200 text-slate-400 text-xs">Belum ada riwayat aktivitas yang tercatat.</div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
-                <th className="px-3 py-2">Waktu</th><th className="px-3 py-2">Nama</th><th className="px-3 py-2">Role</th>
-                <th className="px-3 py-2">Aksi</th><th className="px-3 py-2">Sistem</th><th className="px-3 py-2">Periode</th><th className="px-3 py-2">Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((l, i) => (
-                <tr key={i} className="border-b border-slate-100 last:border-0">
-                  <td className="whitespace-nowrap px-3 py-1.5 text-xs text-slate-500">{new Date(l.waktu).toLocaleString("id-ID")}</td>
-                  <td className="px-3 py-1.5">{l.nama}</td>
-                  <td className="px-3 py-1.5 text-xs text-slate-500">{l.role} {l.departemen}</td>
-                  <td className="px-3 py-1.5">{l.aksi}</td>
-                  <td className="px-3 py-1.5">{l.sistem}</td>
-                  <td className="px-3 py-1.5">{l.bulan}</td>
-                  <td className="px-3 py-1.5 text-xs text-slate-500">{l.detail}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="bg-white rounded-3xl border border-slate-200/80 divide-y text-xs shadow-xs overflow-hidden">
+          {logs.map((l, i) => (
+            <div key={i} className="p-4 flex flex-wrap items-center justify-between gap-2 hover:bg-slate-50/70 transition">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold text-slate-800">{l.nama}</span>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
+                    {l.role} {l.departemen ? `· ${l.departemen}` : ""}
+                  </span>
+                  <span className="font-semibold text-teal-900 bg-teal-50 px-2.5 py-0.5 rounded-full text-[11px] border border-teal-200/60">
+                    {l.aksi}
+                  </span>
+                  {l.sistem && (
+                    <span className="text-[11px] font-bold text-slate-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                      {l.sistem}
+                    </span>
+                  )}
+                </div>
+                {l.detail && <p className="text-slate-500 text-[11px]">{l.detail}</p>}
+              </div>
+              <span className="text-slate-400 text-[10px] whitespace-nowrap">{new Date(l.waktu).toLocaleString("id-ID")}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-/* ========================================================================= VERIFIKASI TANDA TANGAN (halaman publik, dibuka lewat scan QR) */
+/* =========================================================================
+   16. HALAMAN VERIFIKASI QR DOKUMEN PUBLIK (/verify)
+   ========================================================================= */
 function VerifyPage() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const type = params.get("type"); // "reportHasil" | "pengkajian"
+  const type = params.get("type");
   const systemKey = params.get("system");
   const slot = params.get("slot");
   const period = params.get("month");
@@ -2220,7 +2516,6 @@ function VerifyPage() {
     }
     load();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   let signer = null;
@@ -2247,61 +2542,61 @@ function VerifyPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
       <div className="w-full max-w-sm">
-        <div className="mb-4 flex flex-col items-center gap-1.5">
-          <img src="/logo-rama.png" alt="Logo PT. Rama Emerald Multi Sukses" className="h-14 w-14 object-contain" />
-          <h1 className="text-center text-base font-bold text-slate-800">Verifikasi Dokumen SPA</h1>
-          <p className="text-center text-xs text-slate-500">PT. Rama Emerald Multi Sukses</p>
+        <div className="mb-4 flex flex-col items-center gap-1.5 text-center">
+          <img src="/logo-rama.png" alt="Logo" className="h-14 w-14 object-contain" />
+          <h1 className="text-base font-bold text-slate-800">Verifikasi Dokumen SPA</h1>
+          <p className="text-xs text-slate-500">PT. Rama Emerald Multi Sukses</p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl text-center space-y-4">
           {loading ? (
-            <p className="py-4 text-center text-sm text-slate-400">Memeriksa data…</p>
+            <div className="flex justify-center py-6"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
           ) : errorMsg || !system || data?.error ? (
-            <div className="flex flex-col items-center gap-2 py-2 text-center">
-              <AlertTriangle className="text-red-500" size={28} />
-              <p className="text-sm font-semibold text-red-600">Kode tidak valid</p>
-              <p className="text-xs text-slate-500">{errorMsg || data?.error || "Dokumen tidak ditemukan di sistem."}</p>
+            <div className="space-y-2">
+              <AlertTriangle className="text-red-500 mx-auto" size={32} />
+              <p className="text-sm font-bold text-red-600">Kode Tidak Valid</p>
+              <p className="text-xs text-slate-500">{errorMsg || data?.error || "Dokumen tidak ditemukan."}</p>
             </div>
           ) : !isValid ? (
-            <div className="flex flex-col items-center gap-2 py-2 text-center">
-              <AlertTriangle className="text-amber-500" size={28} />
-              <p className="text-sm font-semibold text-amber-600">Belum ditandatangani</p>
+            <div className="space-y-2">
+              <AlertTriangle className="text-amber-500 mx-auto" size={32} />
+              <p className="text-sm font-bold text-amber-600">Belum Ditandatangani</p>
               <p className="text-xs text-slate-500">Slot tanda tangan ini belum disetujui di sistem.</p>
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-3 py-1 text-center">
-              <CheckCircle2 className="text-emerald-600" size={32} />
-              <p className="text-sm font-semibold text-emerald-700">Dokumen tercatat sah dalam sistem</p>
-              <div className="w-full space-y-1.5 rounded-lg bg-slate-50 p-3 text-left text-sm">
-                <p><span className="text-slate-400">Dokumen: </span><span className="font-medium">{docLabel}</span></p>
-                <p><span className="text-slate-400">Sistem: </span><span className="font-medium">{system.label}</span></p>
-                <p><span className="text-slate-400">{periodLabelKey}: </span><span className="font-medium">{periodLabelVal}</span></p>
-                <p><span className="text-slate-400">{signer.label}: </span><span className="font-medium">{signer.nama}</span></p>
-                {signer.jabatan && <p><span className="text-slate-400">Jabatan: </span><span className="font-medium">{signer.jabatan}</span></p>}
-                <p><span className="text-slate-400">Tanggal disetujui: </span><span className="font-medium">{signer.tanggal ? fullDateID(signer.tanggal) : "-"}</span></p>
+            <div className="space-y-4">
+              <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 mx-auto shadow-inner">
+                <CheckCircle2 size={32} />
+              </div>
+              <p className="text-sm font-bold text-emerald-800">Dokumen Sah &amp; Terverifikasi</p>
+              <div className="bg-slate-50 rounded-2xl p-4 text-left text-xs space-y-2 border border-slate-100">
+                <p><span className="text-slate-400">Dokumen:</span> <span className="font-semibold text-slate-800">{docLabel}</span></p>
+                <p><span className="text-slate-400">Sistem:</span> <span className="font-semibold text-slate-800">{system.label}</span></p>
+                <p><span className="text-slate-400">{periodLabelKey}:</span> <span className="font-semibold text-slate-800">{periodLabelVal}</span></p>
+                <p><span className="text-slate-400">{signer.label}:</span> <span className="font-bold text-slate-900">{signer.nama}</span></p>
+                {signer.jabatan && <p><span className="text-slate-400">Jabatan:</span> <span className="font-semibold text-slate-800">{signer.jabatan}</span></p>}
+                <p><span className="text-slate-400">Status:</span> <span className="font-semibold text-emerald-700">Terverifikasi Digital</span></p>
               </div>
             </div>
           )}
         </div>
-
-        <p className="mx-auto mt-4 max-w-xs text-center text-[11px] text-slate-400">
-          Halaman ini menampilkan data langsung dari sistem SPA secara real-time, bukan dari isi file PDF yang di-scan.
-        </p>
       </div>
     </div>
   );
 }
 
-/* ========================================================================= APP ROOT */
+/* =========================================================================
+   17. APP ROOT CONTROLLER
+   ========================================================================= */
 export default function App() {
   if (typeof window !== "undefined" && window.location.pathname === "/verify") {
     return <VerifyPage />;
   }
   const { session, checking, login: doLogin, logout: doLogout } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
-  const [view, setView] = useState("dashboard");
-  const [systemKey, setSystemKey] = useState(null);
+  const [view, setView] = useState({ page: "dashboard" });
   const [monthKey, setMonthKey] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -2309,6 +2604,8 @@ export default function App() {
   const [statusIndex, setStatusIndex] = useState({});
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [statusError, setStatusError] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
 
   const refreshStatus = useCallback(async (month) => {
     setLoadingStatus(true);
@@ -2317,54 +2614,83 @@ export default function App() {
       const idx = await fetchStatusIndex(month);
       setStatusIndex(idx);
     } catch (err) {
-      setStatusError("Gagal memuat status dari spreadsheet: " + err.message);
+      setStatusError("Gagal memuat status: " + err.message);
     } finally {
       setLoadingStatus(false);
     }
   }, []);
 
   useEffect(() => {
-    if (view === "dashboard") refreshStatus(monthKey);
-  }, [view, monthKey, refreshStatus]);
-
-  // Blokir shortcut cetak (Ctrl+P / Cmd+P) untuk publik (belum login) & role
-  // Tamu — cadangan tambahan di atas aturan CSS @media print (yang menyensor
-  // isi cetakan apa pun caranya, termasuk lewat menu/File > Print browser).
-  useEffect(() => {
-    const canPrint = hasAccess(session, "Staff");
-    if (canPrint) return;
-    function blockPrintShortcut(ev) {
-      const isPrintCombo = (ev.ctrlKey || ev.metaKey) && (ev.key === "p" || ev.key === "P");
-      if (isPrintCombo) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        window.alert("Print/Download PDF hanya untuk akun Staff/Supervisor/Manager ke atas. Silakan login dengan akun yang sesuai.");
-      }
-    }
-    window.addEventListener("keydown", blockPrintShortcut, true);
-    return () => window.removeEventListener("keydown", blockPrintShortcut, true);
-  }, [session]);
+    if (view.page === "dashboard") refreshStatus(monthKey);
+  }, [view.page, monthKey, refreshStatus]);
 
   useEffect(() => {
-    if (view === "activity" && !(session && hasAccess(session, "Supervisor"))) {
-      setView("dashboard");
+    if (!session) {
+      setNotifications([]);
+      return;
     }
-  }, [session, view]);
+    let isMounted = true;
+    const fetchNotifs = async () => {
+      try {
+        const notifList = [];
+        await Promise.all(
+          SYSTEMS.map(async (sys) => {
+            try {
+              const entriesRes = await fetchEntries(sys.key, monthKey).catch(() => []);
+              const list = Array.isArray(entriesRes) ? entriesRes : entriesRes?.entries || [];
+              const params = PARAMS_BY_JENIS[sys.jenis] || [];
+              list.forEach((e) => {
+                params.forEach((p) => {
+                  const st = statusFor(e[p], p, sys.jenis);
+                  if (st.level >= 3) {
+                    notifList.push({
+                      type: "critical",
+                      systemKey: sys.key,
+                      systemLabel: sys.label,
+                      title: `Peringatan ${st.level === 4 ? "TMS (Melebihi Syarat)" : "Action Limit"}`,
+                      desc: `Titik ${e.titikSampling} parameter ${PARAM_META[p].label}: ${e[p]} (Tgl ${e.tanggal}).`,
+                      time: e.tanggal,
+                    });
+                  }
+                });
+              });
+            } catch {}
+          })
+        );
+        if (isMounted) setNotifications(notifList);
+      } catch {}
+    };
+    fetchNotifs();
+  }, [session, monthKey]);
+
+  const handleSelectNotification = (notif) => {
+    if (notif.systemKey) {
+      setView({ page: "detail", system: notif.systemKey });
+    }
+  };
+
+  const handleLogout = useCallback(() => {
+    doLogout();
+    setView({ page: "dashboard" });
+    setShowProfile(false);
+    setShowChangePassword(false);
+  }, [doLogout]);
 
   if (checking) {
-    return <div className="flex h-screen items-center justify-center text-slate-400"><Loader2 className="mr-2 animate-spin" size={18} /> Memuat sesi...</div>;
+    return <div className="flex h-screen items-center justify-center text-slate-400 font-sans"><Loader2 className="mr-2 animate-spin" size={18} /> Memuat sesi...</div>;
   }
 
   return (
-    <div className="min-h-full bg-slate-50">
+    <div className="min-h-full bg-slate-50 flex font-sans">
       <style>{`
         .only-print { display: none; }
         .print-blocked-notice { display: none; }
         * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         @media print {
-          .no-print { display: none !important; }
+          .no-print, aside, header { display: none !important; }
           .only-screen { display: none !important; }
           .only-print { display: block !important; }
+          .print-content-shell { padding-left: 0 !important; margin-left: 0 !important; width: 100% !important; max-width: 100% !important; }
           .print-card { box-shadow: none !important; border: 1px solid #cbd5e1 !important; page-break-inside: avoid; break-inside: avoid; }
           .avoid-break { page-break-inside: avoid; break-inside: avoid; }
           [data-print-blocked="true"] > *:not(.print-blocked-notice) { display: none !important; }
@@ -2373,41 +2699,81 @@ export default function App() {
             font-size: 15px; font-weight: 700; color: #334155;
           }
         }
-        @page {
-          margin: 1.5cm 1.5cm 2cm 1.5cm;
-        }
-        @page {
-          @bottom-right {
-            content: "Halaman " counter(page);
-            font-size: 9px;
-            color: #64748b;
-          }
-        }
+        @page { margin: 1.5cm 1.5cm 2cm 1.5cm; }
       `}</style>
-      <TopBar session={session} onLoginClick={() => setShowLogin(true)} onLogout={doLogout} onChangePasswordClick={() => setShowChangePassword(true)} view={view} setView={setView} />
-      {showLogin && <LoginModal onClose={() => setShowLogin(false)} onLogin={doLogin} />}
-      {showChangePassword && <ChangePasswordModal token={session?.token} onClose={() => setShowChangePassword(false)} />}
-      {view === "dashboard" ? (
-        <Dashboard
-          monthKey={monthKey}
-          setMonthKey={setMonthKey}
-          statusIndex={statusIndex}
-          loadingStatus={loadingStatus}
-          statusError={statusError}
-          onOpen={(key) => { setSystemKey(key); setView("detail"); }}
-        />
-      ) : view === "activity" ? (
-        <ActivityLogPage token={session?.token} onBack={() => setView("dashboard")} />
-      ) : (
-        <SystemDetail
-          systemKey={systemKey}
-          monthKey={monthKey}
-          setMonthKey={setMonthKey}
-          onBack={() => setView("dashboard")}
-          onSaved={() => refreshStatus(monthKey)}
+
+      <Sidebar
+        session={session}
+        view={view}
+        setView={setView}
+        status={statusIndex}
+        onNeedLogin={() => setShowLogin(true)}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        notifications={notifications}
+      />
+
+      <div className="flex-1 flex flex-col min-w-0 lg:pl-72 print-content-shell">
+        <HeaderBar
           session={session}
-          token={session?.token}
+          onLoginClick={() => setShowLogin(true)}
+          onLogout={handleLogout}
+          onProfileClick={() => setShowProfile(true)}
+          month={monthKey}
+          setMonth={setMonthKey}
+          onToggleSidebar={() => setSidebarOpen(true)}
+          notifications={notifications}
+          onSelectNotification={handleSelectNotification}
         />
+
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {view.page === "dashboard" && (
+            <Dashboard
+              monthKey={monthKey}
+              setMonthKey={setMonthKey}
+              statusIndex={statusIndex}
+              loadingStatus={loadingStatus}
+              statusError={statusError}
+              onOpen={(key) => setView({ page: "detail", system: key })}
+            />
+          )}
+          {view.page === "notifications" && session && (
+            <NotificationsPage
+              notifications={notifications}
+              onSelectNotification={handleSelectNotification}
+              setView={setView}
+            />
+          )}
+          {view.page === "activity" && session && (
+            <ActivityLogPage token={session?.token} onBack={() => setView({ page: "dashboard" })} />
+          )}
+          {view.page === "detail" && (
+            <SystemDetail
+              systemKey={view.system || SYSTEMS[0].key}
+              monthKey={monthKey}
+              setMonthKey={setMonthKey}
+              onBack={() => setView({ page: "dashboard" })}
+              onSaved={() => refreshStatus(monthKey)}
+              session={session}
+              token={session?.token}
+            />
+          )}
+        </main>
+      </div>
+
+      {showLogin && <LoginModal onClose={() => setShowLogin(false)} onLogin={doLogin} />}
+      {showProfile && session && (
+        <ProfileModal
+          session={session}
+          onClose={() => setShowProfile(false)}
+          onChangePasswordClick={() => {
+            setShowProfile(false);
+            setShowChangePassword(true);
+          }}
+        />
+      )}
+      {showChangePassword && (
+        <ChangePasswordModal token={session?.token} onClose={() => setShowChangePassword(false)} />
       )}
     </div>
   );
