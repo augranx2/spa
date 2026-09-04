@@ -644,10 +644,11 @@ function saveEntries_(systemKey, month, entries) {
 }
 
 function saveEntriesAuthed_(session, systemKey, month, entries) {
-  const isQCInput = requireRole_(session, "Staff", "QC");
-  const isQAInput = requireRole_(session, "Supervisor", "QA");
-  if (!isQCInput && !isQAInput) {
-    return { error: "Hanya Staff/Supervisor/Manager QC, atau Supervisor/Manager QA, yang boleh mengisi data pengujian." };
+  // Data pengujian mentah HANYA boleh diisi departemen QC (Administrator
+  // dikecualikan lewat requireRole_). QA tidak ikut mengisi data — tugas QA
+  // adalah menyusun Pengkajian setelah Formulir QC final di-acc.
+  if (!requireRole_(session, "Staff", "QC")) {
+    return { error: "Hanya Staff/Supervisor/Manager QC yang boleh mengisi data pengujian." };
   }
   const cfg = SYSTEMS[systemKey];
   if (!cfg) return { error: "Sistem tidak dikenal: " + systemKey };
@@ -658,9 +659,9 @@ function saveEntriesAuthed_(session, systemKey, month, entries) {
   const submittedIds = {};
   entries.forEach(function (e) { submittedIds[e.id] = true; });
   const deletedRows = before.filter(function (e) { return !submittedIds[e.id]; });
-  const canDelete = requireRole_(session, "Supervisor", "QC") || requireRole_(session, "Supervisor", "QA");
+  const canDelete = requireRole_(session, "Supervisor", "QC");
   if (deletedRows.length > 0 && !canDelete) {
-    return { error: "Staff tidak bisa menghapus data yang sudah tersimpan. Hubungi Supervisor/Manager QC atau QA untuk menghapus baris." };
+    return { error: "Staff tidak bisa menghapus data yang sudah tersimpan. Hubungi Supervisor/Manager QC untuk menghapus baris." };
   }
 
   const result = saveEntries_(systemKey, month, entries);
@@ -1055,11 +1056,6 @@ function isBlankKontrolRecord_(rec) {
 // weekKey Default disimpan sebagai "yyyy-MM-W0" (BUKAN "yyyy-MM" polos) —
 // supaya tidak berisiko salah dibaca/dikonversi sebagai tanggal oleh Google
 // Sheets. Pengecualian minggu tertentu memakai "yyyy-MM-Wn" (n mulai 1).
-function isBlankKontrolRecord_(rec) {
-  if (!rec) return true;
-  return KONTROL_MINGGUAN_FIELDS.every(function (f) { return !rec[f]; });
-}
-
 function monthDefaultWeekKey_(monthKey) {
   return monthKey + "-W0";
 }
@@ -1075,10 +1071,8 @@ function findKontrolMingguan_(records, weekKey, systemKey, monthKey) {
 }
 
 function saveKontrolMingguanAuthed_(session, records) {
-  const isQCInput = requireRole_(session, "Staff", "QC");
-  const isQAInput = requireRole_(session, "Supervisor", "QA");
-  if (!isQCInput && !isQAInput) {
-    return { error: "Hanya Staff/Supervisor/Manager QC, atau Supervisor/Manager QA, yang boleh mengisi Kontrol Mingguan." };
+  if (!requireRole_(session, "Staff", "QC")) {
+    return { error: "Hanya Staff/Supervisor/Manager QC yang boleh mengisi Kontrol Mingguan." };
   }
   if (!(session && session.role === "Administrator")) {
     for (let k = 0; k < (records || []).length; k++) {
