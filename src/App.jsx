@@ -1856,9 +1856,14 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   const canInputQC = isAdmin || (!recordsLocked && !qcFinalApproved && hasAccess(session, "Staff", "QC"));
   const canDeleteQC = isAdmin || (!recordsLocked && !qcFinalApproved && hasAccess(session, "Supervisor", "QC"));
   const canEditQA = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Supervisor", "QA"));
-  // QA (Supervisor ke atas) selalu melihat tombol penyusun narasi, walau
-  // masih terkunci menunggu acc QC — supaya tidak terlihat "hilang".
+  // QA (Supervisor ke atas) selalu melihat tombol penyusun narasi.
   const canUseNarrativeTools = isAdmin || hasAccess(session, "Supervisor", "QA");
+  // QA boleh MENYUSUN sekaligus MENYIMPAN narasi kapan saja dari data yang
+  // sudah diinput QC (walau Formulir QC belum final di-acc) — supaya titik
+  // yang perlu perhatian bisa dicatat lebih awal. Yang tetap menunggu acc
+  // final QC hanyalah APPROVAL ("Dikaji Oleh" & "Mengetahui").
+  const canDraftNarrative = isAdmin || (!recordsLocked && hasAccess(session, "Supervisor", "QA"));
+  const draftOnly = canDraftNarrative && !canEditQA;
   const canApproveFinal = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Manager", "QA"));
   const canViewPembahasan = !!session;
   const canPrint = hasAccess(session, "Staff");
@@ -2131,21 +2136,23 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
             {canUseNarrativeTools && (
               <div className="flex flex-wrap items-center gap-2">
                 {!canEditQA && (
-                  <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-500">
+                  <span className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1 text-[11px] font-medium ${draftOnly ? "bg-amber-50 text-amber-700 border border-amber-200" : "bg-slate-100 text-slate-500"}`}>
                     <Lock size={12} />
                     {recordsLocked
                       ? "Pengkajian sudah final — narasi terkunci"
-                      : "Menunggu Formulir QC di-acc Supervisor/Manager QC"}
+                      : draftOnly
+                        ? "Mode draf — bisa disusun & disimpan, approval menunggu acc final Formulir QC"
+                        : "Menunggu Formulir QC di-acc Supervisor/Manager QC"}
                   </span>
                 )}
-                <button onClick={() => handleGenerateNarrative(false)} disabled={!canEditQA || generating || entries.length === 0}
-                  title={!canEditQA ? "Belum bisa dipakai — Formulir QC periode ini belum final di-acc QC" : "Susun narasi otomatis dari data (tanpa AI)"}
+                <button onClick={() => handleGenerateNarrative(false)} disabled={!canDraftNarrative || generating || entries.length === 0}
+                  title={entries.length === 0 ? "Belum ada data pengujian yang diinput QC untuk periode ini" : "Susun narasi otomatis dari data (tanpa AI)"}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs">
                   {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   Narasi dari Data
                 </button>
-                <button onClick={() => handleGenerateNarrative(true)} disabled={!canEditQA || generating || entries.length === 0}
-                  title={!canEditQA ? "Belum bisa dipakai — Formulir QC periode ini belum final di-acc QC" : "Susun narasi dengan bantuan AI"}
+                <button onClick={() => handleGenerateNarrative(true)} disabled={!canDraftNarrative || generating || entries.length === 0}
+                  title={entries.length === 0 ? "Belum ada data pengujian yang diinput QC untuk periode ini" : "Susun narasi dengan bantuan AI"}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs">
                   {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   Narasi dari AI
@@ -2158,7 +2165,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs space-y-2">
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">Pendahuluan</label>
             <AutoTextarea className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-700 focus:border-teal-700 focus:outline-none leading-relaxed"
-              rows={3} value={narrative.pendahuluan} onChange={(ev) => setNarrative({ ...narrative, pendahuluan: ev.target.value })} readOnly={!canEditQA} />
+              rows={3} value={narrative.pendahuluan} onChange={(ev) => setNarrative({ ...narrative, pendahuluan: ev.target.value })} readOnly={!canDraftNarrative} />
           </div>
 
           <div className="space-y-4">
@@ -2176,26 +2183,26 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
                     value={narrative.perParameter[p] || ""}
                     placeholder={`Tulis ulasan hasil dan tren untuk ${PARAM_META[p].short}...`}
                     onChange={(ev) => setNarrative({ ...narrative, perParameter: { ...narrative.perParameter, [p]: ev.target.value } })}
-                    readOnly={!canEditQA}
+                    readOnly={!canDraftNarrative}
                   />
                 </div>
               </div>
             ))}
           </div>
 
-          {(narrative.reviewTren || canEditQA) && (
+          {(narrative.reviewTren || canDraftNarrative) && (
             <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs space-y-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Review Tren (vs Periode Sebelumnya)</h3>
               <AutoTextarea className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-700 focus:border-teal-700 focus:outline-none leading-relaxed"
                 rows={4} placeholder="Opsional — perbandingan dengan data periode sebelumnya."
-                value={narrative.reviewTren} onChange={(ev) => setNarrative({ ...narrative, reviewTren: ev.target.value })} readOnly={!canEditQA} />
+                value={narrative.reviewTren} onChange={(ev) => setNarrative({ ...narrative, reviewTren: ev.target.value })} readOnly={!canDraftNarrative} />
             </div>
           )}
 
           <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs space-y-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Kesimpulan Akhir</h3>
             <AutoTextarea className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-700 focus:border-teal-700 focus:outline-none leading-relaxed"
-              rows={5} value={narrative.kesimpulan} onChange={(ev) => setNarrative({ ...narrative, kesimpulan: ev.target.value })} readOnly={!canEditQA} />
+              rows={5} value={narrative.kesimpulan} onChange={(ev) => setNarrative({ ...narrative, kesimpulan: ev.target.value })} readOnly={!canDraftNarrative} />
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white p-5 print-card shadow-xs">
@@ -2235,9 +2242,16 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
             </div>
           </div>
 
-          {canEditQA && (
-            <div className="no-print flex justify-end">
-              <button onClick={saveNarrativeOnly} disabled={saving} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60 shadow-xs">
+          {canDraftNarrative && (
+            <div className="no-print flex flex-wrap items-center justify-end gap-2">
+              {draftOnly && (
+                <span className="text-[11px] font-medium text-amber-700">
+                  Tersimpan sebagai draf. Approval "Dikaji Oleh" &amp; "Mengetahui" baru bisa dilakukan setelah Formulir QC periode ini final di-acc Supervisor/Manager QC.
+                </span>
+              )}
+              <button onClick={saveNarrativeOnly} disabled={saving || !canDraftNarrative}
+                title="Simpan narasi & pembahasan"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60 disabled:cursor-not-allowed shadow-xs">
                 {saving ? <Loader2 size={13} className="animate-spin" /> : null} Simpan Narasi &amp; Pembahasan
               </button>
             </div>
