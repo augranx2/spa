@@ -1994,7 +1994,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         perParameter: { ...prev.perParameter, ...localRes.perParameter },
         reviewTren: localRes.reviewTren, kesimpulan: localRes.kesimpulan,
       }));
-      setAiError("AI gagal merespons, dipakai narasi otomatis lokal.");
+      setAiError(`AI gagal merespons, dipakai narasi otomatis dari data. Penyebab: ${err.message}`);
     } finally {
       setGenerating(false);
     }
