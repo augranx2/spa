@@ -115,6 +115,70 @@ function normalizeNumericInput(str) {
 }
 
 /* =========================================================================
+   1b. TOAST / NOTIFIKASI POP-UP
+   ========================================================================= */
+const ToastContext = React.createContext(null);
+
+// Dipakai komponen mana pun: const toast = useToast(); toast.success("...")
+function useToast() {
+  const ctx = React.useContext(ToastContext);
+  // Fallback aman kalau komponen dipakai di luar provider (mis. halaman /verify)
+  return ctx || { success: () => {}, error: () => {}, info: () => {} };
+}
+
+const TOAST_STYLE = {
+  success: { wrap: "border-emerald-200 bg-white", bar: "bg-emerald-500", icon: "text-emerald-600", Icon: CheckCircle2 },
+  error: { wrap: "border-red-200 bg-white", bar: "bg-red-500", icon: "text-red-600", Icon: XCircle },
+  info: { wrap: "border-slate-200 bg-white", bar: "bg-teal-600", icon: "text-teal-700", Icon: Bell },
+};
+
+function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+
+  const remove = useCallback((id) => {
+    setToasts((list) => list.filter((t) => t.id !== id));
+  }, []);
+
+  const push = useCallback((type, message, ms) => {
+    const id = uid();
+    setToasts((list) => [...list, { id, type, message }]);
+    setTimeout(() => remove(id), ms || (type === "error" ? 7000 : 3500));
+  }, [remove]);
+
+  const api = useMemo(() => ({
+    success: (m, ms) => push("success", m, ms),
+    error: (m, ms) => push("error", m, ms),
+    info: (m, ms) => push("info", m, ms),
+  }), [push]);
+
+  return (
+    <ToastContext.Provider value={api}>
+      {children}
+      {typeof document !== "undefined" && createPortal(
+        <div className="no-print pointer-events-none fixed inset-x-0 top-4 z-[9999] flex flex-col items-center gap-2 px-4 sm:inset-x-auto sm:right-5 sm:items-end">
+          {toasts.map((t) => {
+            const st = TOAST_STYLE[t.type] || TOAST_STYLE.info;
+            const Icon = st.Icon;
+            return (
+              <div key={t.id}
+                className={`pointer-events-auto flex w-full max-w-md items-start gap-3 overflow-hidden rounded-2xl border ${st.wrap} p-3.5 pr-2.5 shadow-lg ring-1 ring-black/5`}
+                style={{ animation: "toastIn .22s ease-out" }}>
+                <span className={`mt-0.5 shrink-0 ${st.icon}`}><Icon size={18} /></span>
+                <p className="flex-1 text-xs font-semibold leading-relaxed text-slate-700">{t.message}</p>
+                <button onClick={() => remove(t.id)} className="shrink-0 rounded-lg p-1 text-slate-300 transition hover:bg-slate-100 hover:text-slate-500" title="Tutup">
+                  <X size={14} />
+                </button>
+              </div>
+            );
+          })}
+        </div>,
+        document.body
+      )}
+    </ToastContext.Provider>
+  );
+}
+
+/* =========================================================================
    2. QR VERIFIKASI DIGITAL
    ========================================================================= */
 function buildVerifyUrl(params) {
@@ -1490,6 +1554,7 @@ function LegendRow() {
    12. REPORT HASIL PEMERIKSAAN (FORMULIR QC FISIK DIGITIZED)
    ========================================================================= */
 function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token, onBack, kontrolRecords = [], masterPoints = [] }) {
+  const toast = useToast();
   const system = SYSTEMS.find((s) => s.key === systemKey);
   const docNo = DOC_NUMBERS[systemKey];
   const isWFIType = system.jenis === "WFI" || system.jenis === "Pure Steam";
@@ -1551,8 +1616,10 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
       const res = await apiSaveReportHasil(systemKey, monthKey, token);
       if (res.error) throw new Error(res.error);
       setMeta(res);
+      toast.success("Report Hasil Pemeriksaan berhasil disimpan.");
     } catch (err) {
       setErrorMsg(err.message);
+      toast.error("Gagal menyimpan Report Hasil Pemeriksaan: " + err.message);
     } finally {
       setSaving(false);
     }
@@ -1565,8 +1632,10 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
       const res = await apiApproveReportHasil(systemKey, monthKey, token);
       if (res.error) throw new Error(res.error);
       setMeta(res);
+      toast.success("Formulir QC berhasil di-acc. QA sekarang bisa melakukan approval Pengkajian.");
     } catch (err) {
       setErrorMsg(err.message);
+      toast.error("Gagal menyetujui Report Hasil Pemeriksaan: " + err.message);
     } finally {
       setApproving(false);
     }
@@ -1789,6 +1858,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   const system = SYSTEMS.find((s) => s.key === systemKey);
   const params = PARAMS_BY_JENIS[system.jenis] || [];
 
+  const toast = useToast();
   const isAdmin = session?.role === "Administrator";
   const isTamu = session?.role === "Tamu";
   const isQA = isAdmin || (!isTamu && session?.departemen === "QA");
@@ -1885,13 +1955,15 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     setSaveError("");
     try {
       await apiSaveEntries(systemKey, monthKey, entries, token);
+      toast.success(`Data pengujian ${system.label} periode ${monthLabel(monthKey)} berhasil disimpan (${entries.length} baris).`);
       onSaved && onSaved();
     } catch (err) {
       setSaveError("Gagal menyimpan data: " + err.message);
+      toast.error("Gagal menyimpan data pengujian: " + err.message);
     } finally {
       setSaving(false);
     }
-  }, [systemKey, monthKey, entries, token, onSaved]);
+  }, [systemKey, monthKey, entries, token, onSaved, toast, system.label]);
 
   const handleSaveKontrolMingguan = useCallback(async (records) => {
     setKontrolSaving(true);
@@ -1901,26 +1973,34 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       if (res.error) throw new Error(res.error);
       const fresh = await fetchKontrolMingguan().catch(() => []);
       setKontrolRecords(fresh);
+      toast.success("Kontrol Mingguan berhasil disimpan.");
       onSaved && onSaved();
     } catch (err) {
       setKontrolError("Gagal menyimpan Kontrol Mingguan: " + err.message);
+      toast.error("Gagal menyimpan Kontrol Mingguan: " + err.message);
     } finally {
       setKontrolSaving(false);
     }
-  }, [token, onSaved]);
+  }, [token, onSaved, toast]);
 
   const saveNarrativeOnly = useCallback(async () => {
     setSaving(true);
     setSaveError("");
     try {
       await apiSaveReport(systemKey, monthKey, narrative, token);
+      toast.success(
+        qcFinalApproved
+          ? "Narasi & pembahasan Pengkajian berhasil disimpan."
+          : "Narasi tersimpan sebagai draf. Approval menunggu acc final Formulir QC."
+      );
       onSaved && onSaved();
     } catch (err) {
       setSaveError("Gagal menyimpan narasi: " + err.message);
+      toast.error("Gagal menyimpan narasi: " + err.message);
     } finally {
       setSaving(false);
     }
-  }, [systemKey, monthKey, narrative, token, onSaved]);
+  }, [systemKey, monthKey, narrative, token, onSaved, toast, qcFinalApproved]);
 
   const handleApproveDikaji = useCallback(async () => {
     setApproving(true);
@@ -1928,13 +2008,15 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     try {
       await apiApproveDikaji(systemKey, monthKey, token);
       await reloadReport();
+      toast.success('Pengkajian berhasil di-approve "Dikaji Oleh".');
       onSaved && onSaved();
     } catch (err) {
       setSaveError("Gagal menyetujui: " + err.message);
+      toast.error("Gagal menyetujui: " + err.message);
     } finally {
       setApproving(false);
     }
-  }, [systemKey, monthKey, token, reloadReport, onSaved]);
+  }, [systemKey, monthKey, token, reloadReport, onSaved, toast]);
 
   const handleApproveMengetahui = useCallback(async () => {
     setApproving(true);
@@ -1942,13 +2024,15 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     try {
       await apiApproveMengetahui(systemKey, monthKey, token);
       await reloadReport();
+      toast.success('Pengkajian final di-approve "Mengetahui". Data periode ini sekarang terkunci sebagai arsip.');
       onSaved && onSaved();
     } catch (err) {
       setSaveError("Gagal menyetujui: " + err.message);
+      toast.error("Gagal menyetujui: " + err.message);
     } finally {
       setApproving(false);
     }
-  }, [systemKey, monthKey, token, reloadReport, onSaved]);
+  }, [systemKey, monthKey, token, reloadReport, onSaved, toast]);
 
   async function handleGenerateNarrative(useAI = true) {
     setGenerating(true);
@@ -1969,6 +2053,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         reviewTren: localRes.reviewTren, kesimpulan: localRes.kesimpulan,
       }));
       setGenerating(false);
+      toast.success('Narasi otomatis dari data berhasil disusun. Jangan lupa klik "Simpan Narasi & Pembahasan".');
       return;
     }
 
@@ -1988,6 +2073,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         perParameter: { ...prev.perParameter, ...parsed.perParameter },
         reviewTren: parsed.reviewTren || localRes.reviewTren, kesimpulan: parsed.kesimpulan || localRes.kesimpulan,
       }));
+      toast.success('Narasi AI berhasil dibuat. Periksa isinya, lalu klik "Simpan Narasi & Pembahasan".');
     } catch (err) {
       setNarrative((prev) => ({
         ...prev, pendahuluan: localRes.pendahuluan,
@@ -1995,6 +2081,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         reviewTren: localRes.reviewTren, kesimpulan: localRes.kesimpulan,
       }));
       setAiError(`AI gagal merespons, dipakai narasi otomatis dari data. Penyebab: ${err.message}`);
+      toast.error(`AI gagal merespons — dipakai narasi otomatis dari data. Penyebab: ${err.message}`);
     } finally {
       setGenerating(false);
     }
@@ -2325,6 +2412,7 @@ function LoginModal({ onClose, onLogin }) {
 }
 
 function ChangePasswordModal({ token, onClose }) {
+  const toast = useToast();
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -2348,6 +2436,7 @@ function ChangePasswordModal({ token, onClose }) {
       const res = await apiChangePassword(oldPassword, newPassword, token);
       if (res.error) throw new Error(res.error);
       setSuccess(true);
+      toast.success("Password berhasil diganti.");
     } catch (err) {
       setError(err.message || "Gagal mengganti password.");
     } finally {
@@ -2658,10 +2747,7 @@ function VerifyPage() {
 /* =========================================================================
    17. APP ROOT CONTROLLER
    ========================================================================= */
-export default function App() {
-  if (typeof window !== "undefined" && window.location.pathname === "/verify") {
-    return <VerifyPage />;
-  }
+function AppInner() {
   const { session, checking, login: doLogin, logout: doLogout } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -2769,6 +2855,10 @@ export default function App() {
             font-size: 15px; font-weight: 700; color: #334155;
           }
         }
+        @keyframes toastIn {
+          from { opacity: 0; transform: translateY(-10px) scale(.97); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
         @page { margin: 1.5cm 1.5cm 2cm 1.5cm; }
       `}</style>
 
@@ -2846,5 +2936,19 @@ export default function App() {
         <ChangePasswordModal token={session?.token} onClose={() => setShowChangePassword(false)} />
       )}
     </div>
+  );
+}
+
+/* =========================================================================
+   18. ROOT — membungkus aplikasi dengan penyedia notifikasi pop-up (toast)
+   ========================================================================= */
+export default function App() {
+  if (typeof window !== "undefined" && window.location.pathname === "/verify") {
+    return <VerifyPage />;
+  }
+  return (
+    <ToastProvider>
+      <AppInner />
+    </ToastProvider>
   );
 }
