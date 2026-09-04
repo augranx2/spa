@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, Plus, Trash2, Printer, Loader2, Sparkles,
   AlertTriangle, CheckCircle2, XCircle, FileQuestion, LayoutDashboard,
   Droplet, Flame, Layers, LogIn, LogOut, User, History, Lock, Calendar as CalendarIcon,
-  Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft,
+  Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft, Download,
 } from "lucide-react";
 import {
   fetchMaster, fetchEntries, saveEntries as apiSaveEntries,
@@ -1850,9 +1850,15 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   const pengkajianFinalized = !!signoff?.diperiksa?.nama;
   const recordsLocked = !isAdmin && pengkajianFinalized;
 
-  const canInputQC = isAdmin || (!recordsLocked && !qcFinalApproved && (hasAccess(session, "Staff", "QC") || hasAccess(session, "Supervisor", "QA")));
-  const canDeleteQC = isAdmin || (!recordsLocked && !qcFinalApproved && (hasAccess(session, "Supervisor", "QC") || hasAccess(session, "Supervisor", "QA")));
+  // Input data pengujian & kontrol mingguan: HANYA departemen QC (plus
+  // Administrator). QA tidak boleh ikut mengisi data mentah — tugas QA
+  // adalah menyusun Pengkajian setelah Formulir QC final di-acc.
+  const canInputQC = isAdmin || (!recordsLocked && !qcFinalApproved && hasAccess(session, "Staff", "QC"));
+  const canDeleteQC = isAdmin || (!recordsLocked && !qcFinalApproved && hasAccess(session, "Supervisor", "QC"));
   const canEditQA = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Supervisor", "QA"));
+  // QA (Supervisor ke atas) selalu melihat tombol penyusun narasi, walau
+  // masih terkunci menunggu acc QC — supaya tidak terlihat "hilang".
+  const canUseNarrativeTools = isAdmin || hasAccess(session, "Supervisor", "QA");
   const canApproveFinal = isAdmin || (!recordsLocked && qcFinalApproved && hasAccess(session, "Manager", "QA"));
   const canViewPembahasan = !!session;
   const canPrint = hasAccess(session, "Staff");
@@ -2068,7 +2074,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
             !session ? "Login untuk mengisi data"
             : recordsLocked ? "Pengkajian sudah final — data terkunci"
             : qcFinalApproved ? "Formulir QC sudah final di-acc — data terkunci"
-            : "Staff/Supervisor/Manager QC atau QA yang bisa mengisi data"
+            : "Hanya Staff/Supervisor/Manager QC yang bisa mengisi data"
           } />
       </div>
 
@@ -2122,17 +2128,27 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         <>
           <div className="no-print flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Pembahasan &amp; Narasi Evaluasi</h3>
-            {canEditQA && (
-              <div className="flex gap-2">
-                <button onClick={() => handleGenerateNarrative(false)} disabled={generating || entries.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 shadow-2xs">
+            {canUseNarrativeTools && (
+              <div className="flex flex-wrap items-center gap-2">
+                {!canEditQA && (
+                  <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-500">
+                    <Lock size={12} />
+                    {recordsLocked
+                      ? "Pengkajian sudah final — narasi terkunci"
+                      : "Menunggu Formulir QC di-acc Supervisor/Manager QC"}
+                  </span>
+                )}
+                <button onClick={() => handleGenerateNarrative(false)} disabled={!canEditQA || generating || entries.length === 0}
+                  title={!canEditQA ? "Belum bisa dipakai — Formulir QC periode ini belum final di-acc QC" : "Susun narasi otomatis dari data (tanpa AI)"}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs">
                   {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  Draf Lokal
+                  Narasi dari Data
                 </button>
-                <button onClick={() => handleGenerateNarrative(true)} disabled={generating || entries.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 shadow-xs">
+                <button onClick={() => handleGenerateNarrative(true)} disabled={!canEditQA || generating || entries.length === 0}
+                  title={!canEditQA ? "Belum bisa dipakai — Formulir QC periode ini belum final di-acc QC" : "Susun narasi dengan bantuan AI"}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs">
                   {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  Generate AI
+                  Narasi dari AI
                 </button>
               </div>
             )}
@@ -2419,10 +2435,42 @@ function ProfileModal({ session, onClose, onChangePasswordClick }) {
 /* =========================================================================
    15. AUDIT TRAIL / RIWAYAT AKTIVITAS
    ========================================================================= */
-function ActivityLogPage({ token, onBack }) {
+// Ubah daftar log jadi CSV yang aman dibuka Excel (BOM + pemisah ";" supaya
+// Excel versi Indonesia tidak menggabung semua kolom jadi satu).
+function logsToCSV(logs) {
+  const header = ["Waktu", "Username", "Nama", "Role", "Departemen", "Aksi", "Sistem", "Bulan", "Detail"];
+  const esc = (v) => `"${String(v === null || v === undefined ? "" : v).replace(/"/g, '""')}"`;
+  const rows = logs.map((l) => [
+    l.waktu ? new Date(l.waktu).toLocaleString("id-ID") : "",
+    l.username, l.nama, l.role, l.departemen, l.aksi, l.sistem, l.bulan, l.detail,
+  ].map(esc).join(";"));
+  return "\uFEFF" + [header.map(esc).join(";")].concat(rows).join("\r\n");
+}
+
+function downloadCSV(filename, csv) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function ActivityLogPage({ token, session, onBack }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Unduh audit trail: Administrator, atau QA level Supervisor ke atas.
+  const canDownload = session?.role === "Administrator" || hasAccess(session, "Supervisor", "QA");
+
+  const handleDownload = () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadCSV(`Audit_Trail_SPA_${stamp}.csv`, logsToCSV(logs));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -2441,9 +2489,17 @@ function ActivityLogPage({ token, onBack }) {
         </button>
       </div>
 
-      <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs">
-        <h2 className="text-base font-bold text-slate-800">Riwayat Aktivitas &amp; Audit Trail</h2>
-        <p className="text-xs text-slate-400">Rekam jejak seluruh aksi input, edit, dan persetujuan pengujian air</p>
+      <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-bold text-slate-800">Riwayat Aktivitas &amp; Audit Trail</h2>
+          <p className="text-xs text-slate-400">Rekam jejak seluruh aksi input, edit, dan persetujuan pengujian air</p>
+        </div>
+        {canDownload && (
+          <button onClick={handleDownload} disabled={loading || logs.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs">
+            <Download size={14} /> Unduh CSV ({logs.length})
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -2745,7 +2801,7 @@ export default function App() {
             />
           )}
           {view.page === "activity" && session && (
-            <ActivityLogPage token={session?.token} onBack={() => setView({ page: "dashboard" })} />
+            <ActivityLogPage token={session?.token} session={session} onBack={() => setView({ page: "dashboard" })} />
           )}
           {view.page === "detail" && (
             <SystemDetail
