@@ -13,6 +13,11 @@
 //    pakai key yang sama dengan project EM Viable, atau key baru, terserah)
 // 3. Pilih semua environment (Production, Preview, Development), lalu Save
 // 4. Redeploy project agar env var terbaca
+//
+// CATATAN: API key Gemini TIDAK punya masa berlaku/kedaluwarsa. Kalau
+// generate AI gagal, penyebabnya hampir selalu bukan key-nya, melainkan
+// timeout, kuota (429), atau model yang dipilih. Model bisa diganti tanpa
+// ubah kode lewat Environment Variable GEMINI_MODEL (mis. "gemini-3.7-flash").
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -70,26 +75,77 @@ Balas HANYA dengan JSON valid (tanpa markdown, tanpa teks lain) dengan struktur 
   "kesimpulan": "ringkasan akhir sesuai ketentuan di atas"
 }`;
 
-  try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
-      {
+  const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  // Panggil Gemini dengan batas waktu sendiri (55 detik). Vercel memutus
+  // fungsi di detik ke-60 dan balasannya bukan JSON, sehingga di sisi website
+  // errornya jadi tidak jelas ("Unexpected token"). Dengan AbortController,
+  // kita berhenti lebih dulu dan bisa mengirim pesan error yang jelas.
+  async function callGemini(useThinkingConfig) {
+    const generationConfig = { responseMimeType: "application/json", maxOutputTokens: 8192 };
+    // thinkingLevel "low" memangkas waktu berpikir model — narasi ini tugas
+    // penulisan, bukan penalaran berat, jadi hasilnya tetap bagus tapi jauh
+    // lebih cepat sehingga tidak menabrak batas waktu.
+    if (useThinkingConfig) generationConfig.thinkingConfig = { thinkingLevel: "low" };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 55000);
+    try {
+      return await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json" },
-        }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  try {
+    let geminiRes;
+    try {
+      geminiRes = await callGemini(true);
+    } catch (e) {
+      if (e.name === "AbortError") {
+        res.status(504).json({
+          error: `Model ${model} tidak merespons dalam 55 detik. Coba lagi, atau ganti Environment Variable GEMINI_MODEL ke model yang lebih cepat.`,
+        });
+        return;
       }
-    );
+      throw e;
+    }
+
+    // Kalau model menolak thinkingConfig (400), ulangi tanpa opsi itu.
+    if (geminiRes.status === 400) {
+      geminiRes = await callGemini(false);
+    }
+
+    // Kuota/limit sesaat atau server sibuk — coba sekali lagi setelah jeda.
+    if (geminiRes.status === 429 || geminiRes.status === 503) {
+      await new Promise((r) => setTimeout(r, 2000));
+      geminiRes = await callGemini(true);
+    }
 
     if (!geminiRes.ok) {
       const errText = await geminiRes.text();
-      throw new Error(`Gemini API error (HTTP ${geminiRes.status}): ${errText}`);
+      let pesan = `Gemini menolak permintaan (HTTP ${geminiRes.status}).`;
+      if (geminiRes.status === 400) pesan = `Permintaan ditolak Gemini (HTTP 400) untuk model "${model}".`;
+      if (geminiRes.status === 403) pesan = "API key ditolak (HTTP 403). Periksa GEMINI_API_KEY di Vercel dan pastikan Generative Language API aktif.";
+      if (geminiRes.status === 404) pesan = `Model "${model}" tidak ditemukan (HTTP 404). Ganti Environment Variable GEMINI_MODEL.`;
+      if (geminiRes.status === 429) pesan = "Kuota Gemini habis atau terlalu banyak permintaan (HTTP 429). Tunggu beberapa menit lalu coba lagi.";
+      throw new Error(`${pesan} Detail: ${String(errText).slice(0, 400)}`);
     }
 
     const data = await geminiRes.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const candidate = data.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p) => p.text || "").join("") || "";
+
+    if (!text) {
+      const alasan = candidate?.finishReason || data.promptFeedback?.blockReason || "tidak diketahui";
+      throw new Error(`Gemini tidak mengembalikan teks (alasan: ${alasan}). Coba ulangi generate.`);
+    }
 
     const cleanText = text
       .replace(/^```json\n?/i, "")
@@ -97,7 +153,12 @@ Balas HANYA dengan JSON valid (tanpa markdown, tanpa teks lain) dengan struktur 
       .replace(/\n?```$/i, "")
       .trim();
 
-    const parsed = JSON.parse(cleanText);
+    let parsed;
+    try {
+      parsed = JSON.parse(cleanText);
+    } catch {
+      throw new Error("Balasan Gemini bukan JSON yang valid (kemungkinan terpotong). Coba ulangi generate.");
+    }
 
     res.status(200).json(parsed);
   } catch (err) {
