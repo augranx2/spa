@@ -754,15 +754,17 @@ function saveReportAuthed_(session, systemKey, month, narrative) {
   if (!cfg) return { error: "Sistem tidak dikenal: " + systemKey };
   const lockError = recordsLockError_(session, systemKey, month, { skipQcCheck: true });
   if (lockError) return { error: lockError };
-  if (!(session && session.role === "Administrator") && !isQcFinalApproved_(systemKey, month)) {
-    return { error: "Formulir QC periode ini belum final di-acc Supervisor/Manager QC. Pengkajian baru bisa disusun setelah itu selesai." };
-  }
+  // CATATAN: menyimpan/menyusun narasi TIDAK lagi menunggu acc final Formulir
+  // QC — QA boleh menyimpan draf pengkajian dari data yang sudah diinput QC
+  // supaya titik yang perlu perhatian bisa dicatat lebih awal. Yang tetap
+  // menunggu acc final QC hanyalah APPROVAL ("Dikaji Oleh" & "Mengetahui"),
+  // lihat approveDikajiAuthed_ / approveMengetahuiAuthed_ di bawah.
   const existing = getReport_(systemKey, month);
   const signoff = (existing && existing.signoff) || emptySignoffServer_();
   const result = saveReport_(systemKey, month, narrative, signoff);
   writeAuditLog_({
     username: session.username, nama: session.nama, role: session.role, departemen: session.departemen,
-    aksi: "Susun Pengkajian SPA", sistem: cfg.label, bulan: month, detail: "",
+    aksi: "Simpan Narasi Pengkajian SPA", sistem: cfg.label, bulan: month, detail: "",
   });
   return result;
 }
