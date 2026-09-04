@@ -51,10 +51,10 @@ Sistem: ${systemLabel}
 Periode: ${monthLabel}
 Ringkasan kesimpulan periode sebelumnya (kalau ada): ${prevSummary || "Tidak ada data periode sebelumnya."}
 Data ringkasan per parameter periode INI — berisi rentang nilai (min-max), limit Syarat/Alert/Action (pH punya batas ATAS dan BAWAH, parameter lain cuma batas atas), dan daftar titik+tanggal yang mencapai Alert/Action/Melebihi Syarat:
-${JSON.stringify(stats, null, 2)}
+${JSON.stringify(stats)}
 
 Data ringkasan per parameter periode SEBELUMNYA (untuk pembanding Review Tren; null kalau belum ada data periode sebelumnya sama sekali):
-${prevStats ? JSON.stringify(prevStats, null, 2) : "null (belum ada data periode sebelumnya)"}
+${prevStats ? JSON.stringify(prevStats) : "null (belum ada data periode sebelumnya)"}
 
 Tulis narasi Bahasa Indonesia formal ala dokumen QA farmasi (gaya umum yang mudah dipahami, bukan bahasa akademis berat), mengacu HANYA pada data di atas — jangan mengarang angka, titik sampling, atau tanggal yang tidak ada di data.
 
@@ -75,70 +75,84 @@ Balas HANYA dengan JSON valid (tanpa markdown, tanpa teks lain) dengan struktur 
   "kesimpulan": "ringkasan akhir sesuai ketentuan di atas"
 }`;
 
-  const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  // Model utama dan model cadangan (lebih cepat). Keduanya bisa diganti lewat
+  // Environment Variable di Vercel tanpa mengubah kode.
+  const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  const MODEL_CEPAT = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.5-flash-lite";
 
-  // Panggil Gemini dengan batas waktu sendiri (55 detik). Vercel memutus
-  // fungsi di detik ke-60 dan balasannya bukan JSON, sehingga di sisi website
-  // errornya jadi tidak jelas ("Unexpected token"). Dengan AbortController,
-  // kita berhenti lebih dulu dan bisa mengirim pesan error yang jelas.
-  async function callGemini(useThinkingConfig) {
-    const generationConfig = { responseMimeType: "application/json", maxOutputTokens: 8192 };
-    // thinkingLevel "low" memangkas waktu berpikir model — narasi ini tugas
-    // penulisan, bukan penalaran berat, jadi hasilnya tetap bagus tapi jauh
-    // lebih cepat sehingga tidak menabrak batas waktu.
+  // Vercel memutus fungsi di detik ke-60. Anggaran waktu dibagi dua percobaan
+  // supaya kalau model utama kelamaan, masih sempat dicoba ulang dengan model
+  // yang lebih cepat — bukannya habis waktu di satu percobaan saja.
+  async function callGemini(model, timeoutMs, useThinkingConfig) {
+    const generationConfig = { responseMimeType: "application/json", maxOutputTokens: 6144 };
+    // thinkingLevel "low" memangkas waktu berpikir model — menyusun narasi
+    // adalah tugas penulisan, bukan penalaran berat, jadi hasilnya tetap baik
+    // tapi jauh lebih cepat.
     if (useThinkingConfig) generationConfig.thinkingConfig = { thinkingLevel: "low" };
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 55000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig }),
-        signal: controller.signal,
-      });
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig }),
+          signal: controller.signal,
+        }
+      );
+      return { res: r, timeout: false };
+    } catch (e) {
+      // SEMUA percobaan menangkap AbortError-nya sendiri, supaya pesan mentah
+      // "This operation was aborted" tidak pernah sampai ke pengguna.
+      if (e.name === "AbortError" || /aborted/i.test(e.message || "")) return { res: null, timeout: true };
+      throw e;
     } finally {
       clearTimeout(timer);
     }
   }
 
+  function pesanHTTP(status, model) {
+    if (status === 400) return `Permintaan ditolak Gemini (HTTP 400) untuk model "${model}".`;
+    if (status === 403) return "API key ditolak (HTTP 403). Periksa GEMINI_API_KEY di Vercel dan pastikan Generative Language API aktif.";
+    if (status === 404) return `Model "${model}" tidak ditemukan (HTTP 404). Ganti Environment Variable GEMINI_MODEL.`;
+    if (status === 429) return "Kuota Gemini habis atau permintaan terlalu sering (HTTP 429). Tunggu beberapa menit lalu coba lagi.";
+    return `Gemini menolak permintaan (HTTP ${status}).`;
+  }
+
   try {
-    let geminiRes;
-    try {
-      geminiRes = await callGemini(true);
-    } catch (e) {
-      if (e.name === "AbortError") {
-        res.status(504).json({
-          error: `Model ${model} tidak merespons dalam 55 detik. Coba lagi, atau ganti Environment Variable GEMINI_MODEL ke model yang lebih cepat.`,
-        });
-        return;
-      }
-      throw e;
+    // Percobaan 1: model utama, 28 detik.
+    let attempt = await callGemini(MODEL, 28000, true);
+    let modelDipakai = MODEL;
+
+    // Model menolak thinkingConfig? Ulangi tanpa opsi itu.
+    if (attempt.res && attempt.res.status === 400) {
+      attempt = await callGemini(MODEL, 20000, false);
     }
 
-    // Kalau model menolak thinkingConfig (400), ulangi tanpa opsi itu.
-    if (geminiRes.status === 400) {
-      geminiRes = await callGemini(false);
+    // Timeout, kuota sesaat, atau server sibuk → coba model cadangan yang lebih cepat.
+    if (attempt.timeout || (attempt.res && [429, 500, 503].includes(attempt.res.status))) {
+      modelDipakai = MODEL_CEPAT;
+      attempt = await callGemini(MODEL_CEPAT, 22000, true);
     }
 
-    // Kuota/limit sesaat atau server sibuk — coba sekali lagi setelah jeda.
-    if (geminiRes.status === 429 || geminiRes.status === 503) {
-      await new Promise((r) => setTimeout(r, 2000));
-      geminiRes = await callGemini(true);
+    if (attempt.timeout || !attempt.res) {
+      res.status(504).json({
+        error:
+          `Gemini tidak merespons tepat waktu (dicoba dengan ${MODEL} lalu ${MODEL_CEPAT}). ` +
+          "Ini biasanya karena data periode ini banyak sehingga narasinya panjang. " +
+          'Coba ulangi generate, atau pakai tombol "Narasi dari Data" yang tidak memerlukan AI.',
+      });
+      return;
     }
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      let pesan = `Gemini menolak permintaan (HTTP ${geminiRes.status}).`;
-      if (geminiRes.status === 400) pesan = `Permintaan ditolak Gemini (HTTP 400) untuk model "${model}".`;
-      if (geminiRes.status === 403) pesan = "API key ditolak (HTTP 403). Periksa GEMINI_API_KEY di Vercel dan pastikan Generative Language API aktif.";
-      if (geminiRes.status === 404) pesan = `Model "${model}" tidak ditemukan (HTTP 404). Ganti Environment Variable GEMINI_MODEL.`;
-      if (geminiRes.status === 429) pesan = "Kuota Gemini habis atau terlalu banyak permintaan (HTTP 429). Tunggu beberapa menit lalu coba lagi.";
-      throw new Error(`${pesan} Detail: ${String(errText).slice(0, 400)}`);
+    if (!attempt.res.ok) {
+      const errText = await attempt.res.text();
+      throw new Error(`${pesanHTTP(attempt.res.status, modelDipakai)} Detail: ${String(errText).slice(0, 400)}`);
     }
 
-    const data = await geminiRes.json();
+    const data = await attempt.res.json();
     const candidate = data.candidates?.[0];
     const text = candidate?.content?.parts?.map((p) => p.text || "").join("") || "";
 
@@ -162,6 +176,11 @@ Balas HANYA dengan JSON valid (tanpa markdown, tanpa teks lain) dengan struktur 
 
     res.status(200).json(parsed);
   } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
+    const msg = err && (err.message || String(err));
+    if (/aborted/i.test(msg || "")) {
+      res.status(504).json({ error: "Gemini tidak merespons tepat waktu. Coba ulangi, atau pakai tombol \"Narasi dari Data\"." });
+      return;
+    }
+    res.status(500).json({ error: msg || "Kesalahan tidak diketahui." });
   }
 }
