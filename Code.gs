@@ -578,6 +578,27 @@ function getEntriesSheet_(systemKey) {
   return sheet;
 }
 
+// Jumlah kolom tab <Sistem>_Data. Kolom N-S (14-19) adalah penanda
+// SAMPLING ULANG (resampling) untuk menindaklanjuti hasil di atas Action
+// Limit / di luar Syarat, sesuai ketentuan CPOB: hasil asli TIDAK dihapus,
+// tapi ditutup dengan bukti uji ulang.
+var DATA_COLS = 19;
+var DATA_HEADERS_EXTRA = [
+  "Jenis Sampling", "Rujukan Tgl Asal", "Parameter Diuji Ulang",
+  "Catatan Tindak Lanjut", "Ditutup Oleh", "Tanggal Ditutup"
+];
+
+// Pastikan tab Data punya 19 kolom + judul kolom tambahan. Aman dipanggil
+// berulang: tab lama (13 kolom) otomatis dilebarkan tanpa merusak data.
+function ensureDataColumns_(sheet) {
+  if (sheet.getMaxColumns() < DATA_COLS) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), DATA_COLS - sheet.getMaxColumns());
+  }
+  var head = sheet.getRange(1, 14, 1, 6).getValues()[0];
+  var kosong = head.every(function (h) { return !String(h || "").trim(); });
+  if (kosong) sheet.getRange(1, 14, 1, 6).setValues([DATA_HEADERS_EXTRA]);
+}
+
 function rowToEntry_(row, idx) {
   return {
     id: "row-" + idx,
@@ -594,13 +615,24 @@ function rowToEntry_(row, idx) {
     endotoksin: row[10] || "",
     noKontrolMedia: row[11] || "",
     noKontrolBakteri: row[12] || "",
+    jenisSampling: row[13] || "Rutin",
+    refTanggal: formatDate_(row[14]),
+    paramUlang: row[15] || "",
+    catatanTindakLanjut: row[16] || "",
+    ditutupOleh: row[17] || "",
+    tanggalTutup: row[18] || "",
   };
+}
+
+function isResampleRow_(e) {
+  return String((e && e.jenisSampling) || "").toLowerCase().indexOf("resampl") >= 0;
 }
 
 function getEntries_(systemKey, month) {
   const cfg = SYSTEMS[systemKey];
   if (!cfg) return { error: "Sistem tidak dikenal: " + systemKey };
   const sheet = getEntriesSheet_(systemKey);
+  ensureDataColumns_(sheet);
   const values = sheet.getDataRange().getValues();
   const entries = [];
   for (let i = 1; i < values.length; i++) {
@@ -612,8 +644,11 @@ function getEntries_(systemKey, month) {
   return { system: systemKey, month: month, entries: entries };
 }
 
-function saveEntries_(systemKey, month, entries) {
+function saveEntries_(systemKey, month, entries, session) {
   const sheet = getEntriesSheet_(systemKey);
+  ensureDataColumns_(sheet);
+  const penutup = session ? (session.nama || session.username || "") : "";
+  const sekarang = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
   const values = sheet.getDataRange().getValues();
   const kept = [];
   for (let i = 1; i < values.length; i++) {
@@ -633,14 +668,42 @@ function saveEntries_(systemKey, month, entries) {
       e.mikrobiologi === null || e.mikrobiologi === undefined ? "" : e.mikrobiologi,
       e.endotoksin || "",
       e.noKontrolMedia || "", e.noKontrolBakteri || "",
+      e.jenisSampling || "Rutin",
+      e.refTanggal || "",
+      e.paramUlang || "",
+      e.catatanTindakLanjut || "",
+      // Stempel penutup diisi server (bukan dari browser) supaya jejaknya sahih.
+      // Sekali terisi, tidak ditimpa lagi — jejak siapa & kapan tetap utuh.
+      ditutupOlehFor_(e, penutup),
+      tanggalTutupFor_(e, sekarang),
     ];
   });
   const finalRows = kept.concat(newRows);
-  sheet.getRange(2, 1, Math.max(sheet.getMaxRows() - 1, 1), 13).clearContent();
+  sheet.getRange(2, 1, Math.max(sheet.getMaxRows() - 1, 1), DATA_COLS).clearContent();
   if (finalRows.length > 0) {
-    sheet.getRange(2, 1, finalRows.length, 13).setValues(finalRows);
+    // Baris lama (13 kolom) dipanjangkan agar setValues tidak error.
+    const rapi = finalRows.map(function (r) {
+      const out = r.slice(0, DATA_COLS);
+      while (out.length < DATA_COLS) out.push("");
+      return out;
+    });
+    sheet.getRange(2, 1, rapi.length, DATA_COLS).setValues(rapi);
   }
   return { ok: true, saved: newRows.length };
+}
+
+// Baris sampling ulang dianggap "menutup" temuan begitu catatan tindak
+// lanjutnya diisi. Nilai lama dipertahankan supaya tidak berubah tiap simpan.
+function ditutupOlehFor_(e, penutup) {
+  if (e.ditutupOleh) return e.ditutupOleh;
+  if (isResampleRow_(e) && String(e.catatanTindakLanjut || "").trim()) return penutup;
+  return "";
+}
+
+function tanggalTutupFor_(e, sekarang) {
+  if (e.ditutupOleh && e.tanggalTutup) return e.tanggalTutup;
+  if (isResampleRow_(e) && String(e.catatanTindakLanjut || "").trim()) return sekarang;
+  return "";
 }
 
 function saveEntriesAuthed_(session, systemKey, month, entries) {
@@ -664,7 +727,7 @@ function saveEntriesAuthed_(session, systemKey, month, entries) {
     return { error: "Staff tidak bisa menghapus data yang sudah tersimpan. Hubungi Supervisor/Manager QC untuk menghapus baris." };
   }
 
-  const result = saveEntries_(systemKey, month, entries);
+  const result = saveEntries_(systemKey, month, entries, session);
   writeAuditLog_({
     username: session.username, nama: session.nama, role: session.role, departemen: session.departemen,
     aksi: deletedRows.length > 0 ? "Hapus/Ubah Data" : "Simpan Data",

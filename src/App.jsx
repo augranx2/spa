@@ -6,7 +6,7 @@ import {
   ReferenceLine, ReferenceArea, ResponsiveContainer,
 } from "recharts";
 import {
-  ChevronLeft, ChevronRight, Plus, Trash2, Printer, Loader2, Sparkles,
+  ChevronLeft, ChevronRight, Plus, Trash2, Printer, Loader2, Sparkles, RotateCcw,
   AlertTriangle, CheckCircle2, XCircle, FileQuestion, LayoutDashboard,
   Droplet, Flame, Layers, LogIn, LogOut, User, History, Lock, Calendar as CalendarIcon,
   Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft, Download,
@@ -24,6 +24,8 @@ import {
   generateLocalNarrative, PARAM_META, PARAMS_BY_JENIS, LIMITS, getLimit,
   QUALI_OPTIONS, statusFor, parseNumericValue, fullDateID, weekKeyForISO,
   weekLabel, findKontrolMingguan, monthDefaultWeekKey,
+  JENIS_RUTIN, JENIS_RESAMPLING, isResampleEntry, paramUlangList,
+  findResample, collectFindings, selisihHari,
 } from "./narrativeGenerator.js";
 import { useAuth, hasAccess } from "./auth.js";
 
@@ -442,6 +444,16 @@ function statusForChartValue(value, limit) {
 function ChartDot({ cx, cy, payload, limit }) {
   if (cx == null || cy == null) return null;
   const s = statusForChartValue(payload.value, limit);
+  // Hasil sampling ulang tetap ikut dihitung di tren, tapi digambar sebagai
+  // belah ketupat bergaris biru supaya bisa dibedakan dari sampling rutin.
+  if (payload.ulang) {
+    return (
+      <g>
+        <rect x={cx - 4.5} y={cy - 4.5} width={9} height={9} transform={`rotate(45 ${cx} ${cy})`}
+          fill={s.color} stroke="#0369a1" strokeWidth={1.8} />
+      </g>
+    );
+  }
   return <circle cx={cx} cy={cy} r={4} fill={s.color} stroke="#fff" strokeWidth={1.5} />;
 }
 
@@ -454,6 +466,7 @@ function ChartTooltip({ active, payload, limit, unit }) {
       <p className="mb-1 max-w-[160px] font-semibold text-slate-600">{p.label}</p>
       <p className="text-sm font-bold" style={{ color: s.color }}>{displayValue(p.value)}{unit ? ` ${unit}` : ""}</p>
       <p className="font-medium" style={{ color: s.color }}>{s.label}</p>
+      {p.ulang && <p className="mt-0.5 font-semibold text-sky-700">Hasil sampling ulang</p>}
     </div>
   );
 }
@@ -485,8 +498,10 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
       const v = parseNumericValue(raw);
       if (v === null) return null;
       if (limit.syaratMin === undefined && v > outlierCutoff) { excludedCount += 1; return null; }
-      const label = pointCounts[e.titikSampling] > 1 ? `${e.titikSampling} (${shortDate(e.tanggal)})` : e.titikSampling;
-      return { label, value: v, room: e.namaRuangan || e.titikSampling };
+      const ulang = isResampleEntry(e);
+      const baseLabel = pointCounts[e.titikSampling] > 1 ? `${e.titikSampling} (${shortDate(e.tanggal)})` : e.titikSampling;
+      const label = ulang ? `${baseLabel} ↻` : baseLabel;
+      return { label, value: v, room: e.namaRuangan || e.titikSampling, ulang };
     })
     .filter(Boolean);
   if (data.length === 0) return null;
@@ -519,6 +534,11 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
           <LegendChip color="#b45309" label={isBidirectional ? `Alert ${limit.alertMin}–${limit.alertMax}` : `Alert ${limit.alertMax}`} />
           <LegendChip color="#c2410c" label={isBidirectional ? `Action ${limit.actionMin}–${limit.actionMax}` : `Action ${limit.actionMax}`} />
           <LegendChip color="#b91c1c" label={isBidirectional ? `Syarat ${limit.syaratMin}–${limit.syaratMax}` : `Syarat ${limit.syaratMax}`} />
+          {data.some((d) => d.ulang) && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-700">
+              <span className="h-1.5 w-1.5 rotate-45 bg-sky-600" /> Sampling ulang (↻)
+            </span>
+          )}
         </div>
       </div>
       <ResponsiveContainer width="100%" height={260}>
@@ -586,6 +606,8 @@ const STATUS_BADGE_CLASS = {
 };
 
 function ParamValueTable({ entries, paramKey, jenis }) {
+  // `entries` = seluruh baris periode ini (termasuk baris sampling ulang),
+  // dipakai untuk memasangkan temuan dengan tindak lanjutnya.
   const meta = PARAM_META[paramKey];
   const qualitative = getLimit(paramKey, jenis).qualitative;
   const rows = entries.filter((e) => e[paramKey] !== null && e[paramKey] !== undefined && e[paramKey] !== "");
@@ -605,20 +627,47 @@ function ParamValueTable({ entries, paramKey, jenis }) {
               <th className="whitespace-nowrap px-4 py-2">Nama Ruangan</th>
               <th className="whitespace-nowrap px-4 py-2">Tanggal</th>
               <th className="whitespace-nowrap px-4 py-2">Nilai</th>
+              <th className="whitespace-nowrap px-4 py-2">Keterangan</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((e) => {
               const st = statusFor(e[paramKey], paramKey, jenis);
+              const ulang = isResampleEntry(e);
+              // Untuk hasil rutin yang bermasalah, cari baris sampling ulangnya.
+              const tindak = !ulang && st.level >= 3 ? findResample(entries, e, paramKey) : null;
+              const tindakStatus = tindak ? statusFor(tindak[paramKey], paramKey, jenis) : null;
+              const ditutup = tindak && tindakStatus.level < 3 && String(tindak.catatanTindakLanjut || "").trim();
               return (
-                <tr key={e.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
-                  <td className="whitespace-nowrap px-4 py-2 font-semibold text-slate-800">{e.titikSampling || "-"}</td>
+                <tr key={e.id} className={`border-b border-slate-100 last:border-0 hover:bg-slate-50/50 ${ulang ? "bg-sky-50/40" : ""}`}>
+                  <td className="whitespace-nowrap px-4 py-2 font-semibold text-slate-800">
+                    {e.titikSampling || "-"}
+                    {ulang && <span className="ml-1.5 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800">ULANG</span>}
+                  </td>
                   <td className="px-4 py-2 text-slate-600">{e.namaRuangan || "-"}</td>
                   <td className="whitespace-nowrap px-4 py-2 text-slate-500">{isoToID(e.tanggal)}</td>
                   <td className="px-4 py-2">
                     <span className={`inline-flex rounded-md px-2.5 py-0.5 text-xs font-bold ${STATUS_BADGE_CLASS[st.level] || STATUS_BADGE_CLASS[0]}`}>
                       {displayValue(e[paramKey])}{!qualitative && meta.unit ? ` ${meta.unit}` : ""}
                     </span>
+                  </td>
+                  <td className="px-4 py-2 text-[11px] leading-snug">
+                    {ulang ? (
+                      <span className="text-sky-800">
+                        Uji ulang atas hasil {isoToID(e.refTanggal)}
+                        {String(e.catatanTindakLanjut || "").trim() ? ` — ${e.catatanTindakLanjut}` : ""}
+                      </span>
+                    ) : ditutup ? (
+                      <span className="font-semibold text-emerald-700">
+                        Ditindaklanjuti — sampling ulang {isoToID(tindak.tanggal)}: {displayValue(tindak[paramKey])} (memenuhi syarat)
+                      </span>
+                    ) : st.level >= 3 ? (
+                      <span className="font-semibold text-orange-700">
+                        {tindak ? "Sampling ulang tercatat, temuan belum ditutup" : "Belum ada sampling ulang"}
+                      </span>
+                    ) : (
+                      <span className="text-slate-300">-</span>
+                    )}
                   </td>
                 </tr>
               );
@@ -633,8 +682,24 @@ function ParamValueTable({ entries, paramKey, jenis }) {
 /* =========================================================================
    6. INPUT DATA HARIAN/BULANAN (EntryEditor)
    ========================================================================= */
-function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, onDelete }) {
+function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, onDelete, allEntries = [], jenis }) {
   const isCustom = entry._custom || !masterPoints.some((p) => p.code === entry.titikSampling);
+  const isUlang = isResampleEntry(entry);
+
+  // Baris asal yang bisa dirujuk: titik sampling sama, bukan baris ulang,
+  // dan punya minimal satu parameter yang mencapai Action Limit / di luar Syarat.
+  const kandidatAsal = allEntries.filter(
+    (o) =>
+      o !== entry &&
+      !isResampleEntry(o) &&
+      o.titikSampling &&
+      o.titikSampling === entry.titikSampling &&
+      params.some((p) => statusFor(o[p], p, jenis).level >= 3)
+  );
+  const asal = kandidatAsal.find((o) => o.tanggal === entry.refTanggal) || null;
+  const paramBermasalah = asal ? params.filter((p) => statusFor(asal[p], p, jenis).level >= 3) : [];
+  const dipilih = paramUlangList(entry);
+
   const handlePick = (val) => {
     if (val === "__custom__") {
       onChange({ ...entry, _custom: true });
@@ -643,11 +708,29 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
     const pt = masterPoints.find((p) => p.code === val);
     if (pt) onChange({ ...entry, _custom: false, titikSampling: pt.code, namaRuangan: pt.name });
   };
+  const togglePar = (p) => {
+    const next = dipilih.includes(p) ? dipilih.filter((x) => x !== p) : dipilih.concat(p);
+    onChange({ ...entry, paramUlang: next.join(", ") });
+  };
+
   return (
-    <tr className="border-b border-slate-100 align-top hover:bg-slate-50/50">
+    <>
+    <tr className={`border-b border-slate-100 align-top hover:bg-slate-50/50 ${isUlang ? "bg-sky-50/50" : ""}`}>
       <td className="px-2 py-1.5">
         <DateInputID disabled={readOnly} className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50"
           value={entry.tanggal || ""} onChange={(iso) => onChange({ ...entry, tanggal: iso })} />
+      </td>
+      <td className="px-2 py-1.5">
+        <select disabled={readOnly} className={`w-32 rounded-lg border px-2 py-1 text-xs disabled:bg-slate-50 font-semibold ${isUlang ? "border-sky-300 text-sky-800 bg-sky-50" : "border-slate-200 text-slate-600"}`}
+          value={isUlang ? JENIS_RESAMPLING : JENIS_RUTIN}
+          onChange={(ev) => onChange({
+            ...entry,
+            jenisSampling: ev.target.value,
+            ...(ev.target.value === JENIS_RUTIN ? { refTanggal: "", paramUlang: "", catatanTindakLanjut: "" } : {}),
+          })}>
+          <option value={JENIS_RUTIN}>Rutin</option>
+          <option value={JENIS_RESAMPLING}>Sampling Ulang</option>
+        </select>
       </td>
       <td className="px-2 py-1.5">
         <select disabled={readOnly} className="w-40 rounded-lg border border-slate-200 px-2 py-1 text-xs disabled:bg-slate-50"
@@ -695,6 +778,59 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
         )}
       </td>
     </tr>
+
+    {isUlang && (
+      <tr className="border-b border-sky-100 bg-sky-50/60">
+        <td colSpan={4 + params.length + 1} className="px-3 py-2.5">
+          <div className="flex flex-wrap items-start gap-4 text-[11px]">
+            <div>
+              <label className="mb-1 block font-semibold uppercase tracking-wide text-sky-900">Menindaklanjuti hasil tanggal</label>
+              <select disabled={readOnly} value={entry.refTanggal || ""}
+                onChange={(ev) => onChange({ ...entry, refTanggal: ev.target.value, paramUlang: "" })}
+                className="w-44 rounded-lg border border-sky-300 bg-white px-2 py-1 text-xs disabled:bg-slate-50">
+                <option value="">-- pilih hasil yang ditindaklanjuti --</option>
+                {kandidatAsal.map((o) => (
+                  <option key={o.id} value={o.tanggal}>{isoToID(o.tanggal)} — {o.titikSampling}</option>
+                ))}
+              </select>
+              {!entry.titikSampling && <p className="mt-1 text-[10px] text-sky-700">Pilih titik sampling dulu.</p>}
+              {entry.titikSampling && kandidatAsal.length === 0 && (
+                <p className="mt-1 text-[10px] text-sky-700">Tidak ada hasil di titik ini yang perlu ditindaklanjuti.</p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block font-semibold uppercase tracking-wide text-sky-900">Parameter yang diuji ulang</label>
+              {paramBermasalah.length === 0 ? (
+                <p className="text-[10px] text-sky-700">Pilih tanggal asal terlebih dahulu.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {paramBermasalah.map((pk) => (
+                    <button key={pk} type="button" disabled={readOnly} onClick={() => togglePar(pk)}
+                      className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                        dipilih.includes(pk) ? "border-sky-600 bg-sky-700 text-white" : "border-sky-300 bg-white text-sky-800 hover:bg-sky-100"}`}>
+                      {PARAM_META[pk].short} ({displayValue(asal[pk])})
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="min-w-[240px] flex-1">
+              <label className="mb-1 block font-semibold uppercase tracking-wide text-sky-900">Catatan tindak lanjut</label>
+              <input type="text" disabled={readOnly} value={entry.catatanTindakLanjut || ""}
+                placeholder="mis. dilakukan sanitasi & flushing loop, lalu sampling ulang"
+                onChange={(ev) => onChange({ ...entry, catatanTindakLanjut: ev.target.value })}
+                className="w-full rounded-lg border border-sky-300 bg-white px-2 py-1 text-xs disabled:bg-slate-50" />
+              {entry.ditutupOleh && (
+                <p className="mt-1 text-[10px] text-sky-700">Ditutup oleh {entry.ditutupOleh}{entry.tanggalTutup ? ` · ${entry.tanggalTutup}` : ""}</p>
+              )}
+            </div>
+          </div>
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 
@@ -702,7 +838,12 @@ function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving
   const params = PARAMS_BY_JENIS[system.jenis] || [];
   const addRow = () => {
     const defaultTanggal = entries[0]?.tanggal || todayISO();
-    const blank = { id: uid(), tanggal: defaultTanggal, titikSampling: "", namaRuangan: "" };
+    const blank = { id: uid(), tanggal: defaultTanggal, titikSampling: "", namaRuangan: "", jenisSampling: JENIS_RUTIN, refTanggal: "", paramUlang: "", catatanTindakLanjut: "" };
+    params.forEach((p) => { blank[p] = ""; });
+    setEntries([blank, ...entries]);
+  };
+  const addResampleRow = () => {
+    const blank = { id: uid(), tanggal: todayISO(), titikSampling: "", namaRuangan: "", jenisSampling: JENIS_RESAMPLING, refTanggal: "", paramUlang: "", catatanTindakLanjut: "" };
     params.forEach((p) => { blank[p] = ""; });
     setEntries([blank, ...entries]);
   };
@@ -715,6 +856,10 @@ function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving
           <div className="flex gap-2">
             <button onClick={addRow} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs">
               <Plus size={14} /> Tambah Titik
+            </button>
+            <button onClick={addResampleRow} title="Tambah baris untuk hasil sampling ulang (tindak lanjut hasil di atas Action Limit)"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100 shadow-2xs">
+              <RotateCcw size={14} /> Sampling Ulang
             </button>
             <button onClick={onSave} disabled={saving} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:opacity-60 shadow-xs">
               {saving ? <Loader2 size={13} className="animate-spin" /> : null} Simpan Data Pengujian
@@ -735,7 +880,7 @@ function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                <th className="px-2 py-1.5">Tanggal</th><th className="px-2 py-1.5">Titik Sampling</th><th className="px-2 py-1.5">Nama Ruangan</th>
+                <th className="px-2 py-1.5">Tanggal</th><th className="px-2 py-1.5">Jenis</th><th className="px-2 py-1.5">Titik Sampling</th><th className="px-2 py-1.5">Nama Ruangan</th>
                 {params.map((p) => <th key={p} className="px-2 py-1.5 text-center">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>)}
                 <th className="px-2 py-1.5" />
               </tr>
@@ -743,6 +888,7 @@ function EntryEditor({ system, masterPoints, entries, setEntries, onSave, saving
             <tbody>
               {entries.map((e, idx) => (
                 <EntryRow key={e.id} entry={e} masterPoints={masterPoints} params={params}
+                  allEntries={entries} jenis={system.jenis}
                   readOnly={!canInput}
                   canDelete={canDeleteExisting || !isExistingRow(e)}
                   onChange={(next) => { const c = entries.slice(); c[idx] = next; setEntries(c); }}
@@ -1360,7 +1506,7 @@ function HeaderBar({
 /* =========================================================================
    10. PUSAT NOTIFIKASI HALAMAN DETAIL
    ========================================================================= */
-function NotificationsPage({ notifications = [], onSelectNotification, setView }) {
+function NotificationsPage({ notifications = [], resolved = [], onSelectNotification, setView }) {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <div className="flex items-center justify-between">
@@ -1435,6 +1581,44 @@ function NotificationsPage({ notifications = [], onSelectNotification, setView }
           </div>
         )}
       </div>
+
+      {resolved.length > 0 && (
+        <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b pb-3.5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                <CheckCheck size={20} />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-800">Temuan yang Sudah Ditindaklanjuti</h2>
+                <p className="text-xs text-slate-400">Hasil di atas Action Limit yang sudah ditutup dengan sampling ulang</p>
+              </div>
+            </div>
+            <span className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full border border-emerald-200">
+              {resolved.length} Ditutup
+            </span>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {resolved.map((item, idx) => (
+              <div key={idx} onClick={() => onSelectNotification(item)}
+                className="my-1.5 flex cursor-pointer items-start justify-between gap-4 rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4 transition hover:bg-emerald-50">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 size={20} className="mt-0.5 text-emerald-600" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-slate-800">{item.title}</p>
+                    <p className="text-xs text-slate-600">{item.desc}</p>
+                    <p className="text-[10px] font-semibold text-slate-400">
+                      Sistem: <span className="text-slate-700">{item.systemLabel}</span>
+                      {item.penutup ? <> · Ditutup oleh: <span className="text-slate-700">{item.penutup}</span></> : null}
+                    </p>
+                  </div>
+                </div>
+                <span className="shrink-0 text-[10px] text-slate-400">{item.time}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1767,7 +1951,10 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
                           const ket = maxLevel >= 4 ? "TMS" : maxLevel === 0 ? "-" : "MS";
                           return (
                             <tr key={e.id} className="hover:bg-slate-50/50">
-                              <td className="border border-slate-200 px-1.5 py-1 font-semibold text-slate-800">{e.titikSampling}</td>
+                              <td className="border border-slate-200 px-1.5 py-1 font-semibold text-slate-800">
+                                {e.titikSampling}
+                                {isResampleEntry(e) && <span className="ml-1 font-bold text-sky-700" title={`Sampling ulang atas hasil ${isoToID(e.refTanggal)}`}>*</span>}
+                              </td>
                               <td className="border border-slate-200 px-1.5 py-1 text-slate-600">{isoToID(e.tanggal)}</td>
                               {baseParams.map((p) => <td key={p} className="border border-slate-200 px-1.5 py-1 text-center font-medium">{displayValue(e[p])}</td>)}
                               {idx === 0 && (
@@ -1804,6 +1991,18 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
                 </tbody>
               </table>
             </div>
+
+            {entriesForMonth.some(isResampleEntry) && (
+              <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50/60 px-4 py-2.5 text-[10.5px] leading-relaxed text-sky-900">
+                <p className="font-bold">Keterangan:</p>
+                <p>
+                  * Baris bertanda bintang adalah hasil <b>sampling ulang</b> yang dilakukan untuk menindaklanjuti
+                  hasil pengujian sebelumnya yang mencapai Action Limit atau berada di luar batas Syarat. Hasil
+                  pengujian awal tetap dicantumkan dan tidak dihapus; rincian tindak lanjut beserta hasil uji
+                  ulangnya diuraikan pada dokumen Pengkajian Trend Data SPA periode yang sama.
+                </p>
+              </div>
+            )}
 
             <div className="mt-6 rounded-3xl border border-slate-200 p-5 print-card">
               <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Tanda Tangan Digital</h3>
@@ -2762,6 +2961,9 @@ function AppInner() {
   const [statusError, setStatusError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  // Temuan yang sudah ditutup lewat sampling ulang: tidak dihitung di badge,
+  // tapi tetap ditampilkan sebagai bukti tindak lanjut untuk inspeksi.
+  const [resolvedNotifications, setResolvedNotifications] = useState([]);
 
   const refreshStatus = useCallback(async (month) => {
     setLoadingStatus(true);
@@ -2783,37 +2985,66 @@ function AppInner() {
   useEffect(() => {
     if (!session) {
       setNotifications([]);
+      setResolvedNotifications([]);
       return;
     }
     let isMounted = true;
     const fetchNotifs = async () => {
       try {
         const notifList = [];
+        const closedList = [];
         await Promise.all(
           SYSTEMS.map(async (sys) => {
             try {
               const entriesRes = await fetchEntries(sys.key, monthKey).catch(() => []);
               const list = Array.isArray(entriesRes) ? entriesRes : entriesRes?.entries || [];
               const params = PARAMS_BY_JENIS[sys.jenis] || [];
-              list.forEach((e) => {
-                params.forEach((p) => {
-                  const st = statusFor(e[p], p, sys.jenis);
-                  if (st.level >= 3) {
-                    notifList.push({
-                      type: "critical",
-                      systemKey: sys.key,
-                      systemLabel: sys.label,
-                      title: `Peringatan ${st.level === 4 ? "TMS (Melebihi Syarat)" : "Action Limit"}`,
-                      desc: `Titik ${e.titikSampling} parameter ${PARAM_META[p].label}: ${e[p]} (Tgl ${e.tanggal}).`,
-                      time: e.tanggal,
-                    });
-                  }
+              // Temuan dikumpulkan lewat collectFindings supaya hasil yang
+              // sudah ditindaklanjuti dengan sampling ulang tidak lagi
+              // dihitung sebagai alert terbuka — tapi tetap tercatat.
+              collectFindings(list, params, sys.jenis).forEach((f) => {
+                const p = f.paramKey;
+                const dasar = {
+                  systemKey: sys.key,
+                  systemLabel: sys.label,
+                  desc: `Titik ${f.entry.titikSampling} parameter ${PARAM_META[p].label}: ${f.entry[p]} (Tgl ${f.entry.tanggal}).`,
+                  time: f.entry.tanggal,
+                };
+                if (f.status === "selesai") {
+                  const beda = selisihHari(f.entry.tanggal, f.ulang.tanggal);
+                  closedList.push({
+                    ...dasar,
+                    type: "resolved",
+                    title: "Ditutup — sampling ulang memenuhi syarat",
+                    desc: `${dasar.desc} Sampling ulang ${f.ulang.tanggal}${beda === 0 ? " (hari yang sama)" : beda != null ? ` (${beda} hari kemudian)` : ""}: ${f.ulang[p]}. ${f.ulang.catatanTindakLanjut}`,
+                    penutup: f.ulang.ditutupOleh || "",
+                  });
+                  return;
+                }
+                notifList.push({
+                  ...dasar,
+                  type: "critical",
+                  title:
+                    f.status === "belum-memenuhi"
+                      ? "Sampling ulang belum memenuhi syarat"
+                      : f.status === "menunggu-catatan"
+                        ? "Menunggu catatan tindak lanjut"
+                        : `Peringatan ${f.asli.level === 4 ? "TMS (Melebihi Syarat)" : "Action Limit"}`,
+                  desc:
+                    f.status === "terbuka"
+                      ? `${dasar.desc} Belum ada sampling ulang.`
+                      : f.status === "menunggu-catatan"
+                        ? `${dasar.desc} Sampling ulang ${f.ulang.tanggal} sudah memenuhi syarat, tinggal isi catatan tindak lanjut untuk menutup temuan.`
+                        : `${dasar.desc} Sampling ulang ${f.ulang.tanggal}: ${f.ulang[p]} — masih belum memenuhi.`,
                 });
               });
             } catch {}
           })
         );
-        if (isMounted) setNotifications(notifList);
+        if (isMounted) {
+          setNotifications(notifList);
+          setResolvedNotifications(closedList);
+        }
       } catch {}
     };
     fetchNotifs();
@@ -2900,6 +3131,7 @@ function AppInner() {
           {view.page === "notifications" && session && (
             <NotificationsPage
               notifications={notifications}
+              resolved={resolvedNotifications}
               onSelectNotification={handleSelectNotification}
               setView={setView}
             />

@@ -219,6 +219,85 @@ function statusFor(rawValue, paramKey, jenis) {
   return { level: 1, value: v };
 }
 
+/* ---------------------------------------------------------------------------
+   SAMPLING ULANG (RESAMPLING)
+   Sesuai CPOB, hasil di atas Action Limit / di luar Syarat TIDAK dihapus.
+   Temuan ditutup dengan bukti uji ulang: baris ber-jenisSampling
+   "Resampling" yang merujuk (titik + tanggal asal + parameter) ke hasil
+   aslinya. Fungsi di bawah memasangkan keduanya.
+--------------------------------------------------------------------------- */
+const JENIS_RUTIN = "Rutin";
+const JENIS_RESAMPLING = "Resampling";
+
+function isResampleEntry(e) {
+  return String((e && e.jenisSampling) || "").toLowerCase().includes("resampl");
+}
+
+function paramUlangList(e) {
+  return String((e && e.paramUlang) || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+// Cari baris sampling ulang untuk satu temuan (entry asli + parameter).
+function findResample(entries, entry, paramKey) {
+  return (entries || []).find(
+    (r) =>
+      isResampleEntry(r) &&
+      r.titikSampling === entry.titikSampling &&
+      r.refTanggal === entry.tanggal &&
+      paramUlangList(r).includes(paramKey)
+  ) || null;
+}
+
+// Status satu temuan: "terbuka" | "menunggu-catatan" | "belum-memenuhi" | "selesai"
+function resolveFinding(entries, entry, paramKey, jenis) {
+  const asli = statusFor(entry[paramKey], paramKey, jenis);
+  if (asli.level < 3) return null; // bukan temuan
+  const ulang = findResample(entries, entry, paramKey);
+  if (!ulang) return { entry, paramKey, asli, ulang: null, status: "terbuka" };
+  const stUlang = statusFor(ulang[paramKey], paramKey, jenis);
+  if (stUlang.level >= 3) return { entry, paramKey, asli, ulang, stUlang, status: "belum-memenuhi" };
+  if (!String(ulang.catatanTindakLanjut || "").trim())
+    return { entry, paramKey, asli, ulang, stUlang, status: "menunggu-catatan" };
+  return { entry, paramKey, asli, ulang, stUlang, status: "selesai" };
+}
+
+// Seluruh temuan pada satu set data.
+function collectFindings(entries, params, jenis) {
+  const out = [];
+  (entries || []).forEach((e) => {
+    if (isResampleEntry(e)) return; // baris ulang bukan temuan baru
+    (params || []).forEach((p) => {
+      const f = resolveFinding(entries, e, p, jenis);
+      if (f) out.push(f);
+    });
+  });
+  return out;
+}
+
+// Selisih hari antara sampling asli dan sampling ulang.
+function selisihHari(isoA, isoB) {
+  const a = new Date(isoA), b = new Date(isoB);
+  if (isNaN(a) || isNaN(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+// Kalimat tindak lanjut yang dipakai di narasi parameter & kesimpulan.
+function kalimatTindakLanjut(f, unit) {
+  if (!f) return "";
+  const u = unit ? ` ${unit}` : "";
+  const dasar = `Nilai ${f.asli.value ?? f.entry[f.paramKey]}${u} pada titik ${f.entry.titikSampling} tanggal ${fullDateID(f.entry.tanggal)} ${f.asli.level === 4 ? "berada di luar batas Syarat" : "mencapai Action Limit"}`;
+  if (f.status === "terbuka") return `${dasar}, dan sampai laporan ini disusun belum dilakukan sampling ulang.`;
+  const beda = selisihHari(f.entry.tanggal, f.ulang.tanggal);
+  const jarak = beda === 0 ? "pada hari yang sama" : beda === null ? "" : `${beda} hari kemudian`;
+  const hasil = `dilakukan sampling ulang tanggal ${fullDateID(f.ulang.tanggal)}${jarak ? ` (${jarak})` : ""} dengan hasil ${f.ulang[f.paramKey]}${u}`;
+  if (f.status === "belum-memenuhi") return `${dasar}; ${hasil} yang masih belum memenuhi, sehingga temuan ini masih dalam penanganan.`;
+  const catatan = String(f.ulang.catatanTindakLanjut || "").trim();
+  return `${dasar}; ${hasil} yang telah memenuhi persyaratan.${catatan ? ` Tindak lanjut: ${catatan}` : ""}`;
+}
+
 function collectPoints(entries, paramKey) {
   return entries
     .map((e) => ({ titik: e.titikSampling || "Titik", tanggal: e.tanggal, raw: e[paramKey] }))
@@ -302,6 +381,14 @@ function paramNarrative(paramKey, entries, jenisLabel) {
     }
   }
 
+  // Paragraf tindak lanjut: setiap temuan Action Limit / di luar Syarat
+  // disebut lengkap dengan bukti sampling ulangnya. Inilah bagian yang
+  // dicari saat inspeksi — hasil asli tetap tertulis, penutupannya jelas.
+  const tindakLanjut = collectFindings(entries, [paramKey], jenisLabel);
+  if (tindakLanjut.length > 0) {
+    text += `\n\nTindak lanjut: ${tindakLanjut.map((f) => kalimatTindakLanjut(f, meta.unit)).join(" ")}`;
+  }
+
   return `${meta.huruf}. ${meta.label}\n${text}`;
 }
 
@@ -373,9 +460,18 @@ export function generateLocalNarrative({ systemLabel, jenisAir, monthLabel, entr
     reviewTren = `Untuk periode ${monthLabel}, hasil pengujian ${jenisAir} ${systemLabel} menunjukkan bahwa ${ringkasan}.\n\nPerbandingan tren dengan periode sebelumnya belum dapat dijelaskan lebih detail karena data periode sebelumnya belum tersedia di sistem. Review tren dibanding periode sebelumnya akan dapat disusun mulai periode berikutnya, setelah data bulan ini tersimpan sebagai pembanding.`;
   }
 
-  const kesimpulan = kesimpulanText(systemLabel, jenisAir, monthLabel, entries, params);
+  let kesimpulan = kesimpulanText(systemLabel, jenisAir, monthLabel, entries, params);
+  const semuaTemuan = collectFindings(entries, params, jenisAir);
+  if (semuaTemuan.length > 0) {
+    const selesai = semuaTemuan.filter((f) => f.status === "selesai").length;
+    const belum = semuaTemuan.length - selesai;
+    kesimpulan += `\n\nPada periode ini terdapat ${semuaTemuan.length} temuan hasil pengujian yang mencapai Action Limit atau berada di luar batas Syarat. ` +
+      (selesai > 0 ? `Sebanyak ${selesai} temuan telah ditindaklanjuti dengan sampling ulang dan hasilnya memenuhi persyaratan. ` : "") +
+      (belum > 0 ? `Sebanyak ${belum} temuan masih dalam penanganan dan akan dipantau hingga diperoleh hasil yang memenuhi persyaratan.` : "Seluruh temuan telah ditutup.");
+  }
 
   return { pendahuluan, perParameter, reviewTren, kesimpulan };
 }
 
 export { PARAM_META, PARAMS_BY_JENIS, LIMITS, getLimit, QUALI_OPTIONS, statusFor, parseNumericValue, fullDateID, weekKeyForISO, weekLabel, findKontrolMingguan, monthDefaultWeekKey, KONTROL_MINGGUAN_FIELDS };
+export { JENIS_RUTIN, JENIS_RESAMPLING, isResampleEntry, paramUlangList, findResample, resolveFinding, collectFindings, selisihHari, kalimatTindakLanjut };
