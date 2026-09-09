@@ -597,6 +597,23 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
   );
 }
 
+// Warna kotak input mengikuti status nilai terhadap spesifikasi, jadi QC
+// langsung tahu begitu selesai mengetik — tanpa menunggu simpan.
+const INPUT_STATUS_CLASS = {
+  0: "border-slate-200 text-slate-700",
+  1: "border-emerald-300 bg-emerald-50 text-emerald-800",
+  2: "border-amber-300 bg-amber-50 text-amber-800",
+  3: "border-orange-400 bg-orange-50 text-orange-800",
+  4: "border-red-400 bg-red-50 text-red-700",
+};
+const STATUS_TITLE = {
+  0: "Belum ada nilai",
+  1: "Terkendali — memenuhi syarat",
+  2: "Mencapai Alert Limit",
+  3: "Mencapai Action Limit — perlu tindak lanjut/sampling ulang",
+  4: "Di luar batas Syarat — penyimpangan",
+};
+
 const STATUS_BADGE_CLASS = {
   0: "bg-slate-100 text-slate-500",
   1: "bg-emerald-50 text-emerald-700",
@@ -751,21 +768,30 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
       </td>
       {params.map((p) => {
         const opts = QUALI_OPTIONS[p];
+        const st = statusFor(entry[p], p, jenis);
+        const warna = INPUT_STATUS_CLASS[st.level] || INPUT_STATUS_CLASS[0];
         return (
           <td key={p} className="px-2 py-1.5">
             {opts ? (
-              <select disabled={readOnly} className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs disabled:bg-slate-50 font-semibold"
+              <select disabled={readOnly} title={STATUS_TITLE[st.level]}
+                className={`w-28 rounded-lg border px-2 py-1 text-center text-xs font-semibold transition-colors ${warna}`}
                 value={entry[p] || ""} onChange={(ev) => onChange({ ...entry, [p]: ev.target.value })}>
                 <option value="">-</option>
                 {opts.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             ) : (
-              <input type="text" disabled={readOnly} className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs disabled:bg-slate-50 font-semibold"
+              <input type="text" disabled={readOnly} title={STATUS_TITLE[st.level]}
+                className={`w-20 rounded-lg border px-2 py-1 text-center text-xs font-semibold transition-colors ${warna}`}
                 placeholder="-" value={entry[p] === null || entry[p] === undefined ? "" : entry[p]}
                 onChange={(ev) => {
                   const raw = normalizeNumericInput(ev.target.value.trim());
                   onChange({ ...entry, [p]: raw === "-" ? null : raw });
                 }} />
+            )}
+            {st.level >= 3 && (
+              <p className={`mt-0.5 text-center text-[9px] font-bold ${st.level >= 4 ? "text-red-600" : "text-orange-600"}`}>
+                {st.level >= 4 ? "TMS" : "ACTION"}
+              </p>
             )}
           </td>
         );
@@ -786,7 +812,15 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
             <div>
               <label className="mb-1 block font-semibold uppercase tracking-wide text-sky-900">Menindaklanjuti hasil tanggal</label>
               <select disabled={readOnly} value={entry.refTanggal || ""}
-                onChange={(ev) => onChange({ ...entry, refTanggal: ev.target.value, paramUlang: "" })}
+                onChange={(ev) => {
+                  // Begitu tanggal rujukan dipilih, seluruh parameter yang
+                  // bermasalah langsung tercentang. Petugas tinggal mematikan
+                  // yang tidak diuji ulang — bukan sebaliknya, supaya tidak ada
+                  // temuan yang terlewat karena lupa mencentang.
+                  const ref = allEntries.find((o) => !isResampleEntry(o) && o.titikSampling === entry.titikSampling && o.tanggal === ev.target.value);
+                  const otomatis = ref ? params.filter((pk) => statusFor(ref[pk], pk, jenis).level >= 3) : [];
+                  onChange({ ...entry, refTanggal: ev.target.value, paramUlang: otomatis.join(", ") });
+                }}
                 className="w-44 rounded-lg border border-sky-300 bg-white px-2 py-1 text-xs disabled:bg-slate-50">
                 <option value="">-- pilih hasil yang ditindaklanjuti --</option>
                 {kandidatAsal.map((o) => (
@@ -805,6 +839,11 @@ function EntryRow({ entry, masterPoints, params, readOnly, canDelete, onChange, 
                 <p className="text-[10px] text-sky-700">Pilih tanggal asal terlebih dahulu.</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
+                  {dipilih.length === 0 && (
+                    <span className="w-full text-[10px] font-semibold text-orange-700">
+                      Belum ada yang dipilih — dianggap menindaklanjuti semua parameter di bawah ini.
+                    </span>
+                  )}
                   {paramBermasalah.map((pk) => (
                     <button key={pk} type="button" disabled={readOnly} onClick={() => togglePar(pk)}
                       className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
@@ -2154,7 +2193,25 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     setSaveError("");
     try {
       await apiSaveEntries(systemKey, monthKey, entries, token);
-      toast.success(`Data pengujian ${system.label} periode ${monthLabel(monthKey)} berhasil disimpan (${entries.length} baris).`);
+      // Muat ulang dari server: yang tampil setelah simpan harus persis apa
+      // yang benar-benar tersimpan, bukan state lokal. Kalau ada kolom yang
+      // tidak tersimpan (mis. Apps Script belum di-deploy ulang), langsung
+      // kelihatan di layar alih-alih baru ketahuan saat halaman dibuka lagi.
+      const fresh = await fetchEntries(systemKey, monthKey).catch(() => null);
+      let hilang = false;
+      if (fresh) {
+        const segar = fresh.map((e) => ({ ...e, id: e.id || uid() }));
+        hilang = entries.some(isResampleEntry) && !segar.some(isResampleEntry);
+        setEntries(segar);
+      }
+      if (hilang) {
+        toast.error(
+          "Data tersimpan, tapi penanda Sampling Ulang tidak ikut tersimpan. " +
+          "Apps Script (Code.gs) kemungkinan belum di-deploy ulang sebagai New version."
+        );
+      } else {
+        toast.success(`Data pengujian ${system.label} periode ${monthLabel(monthKey)} berhasil disimpan (${entries.length} baris).`);
+      }
       onSaved && onSaved();
     } catch (err) {
       setSaveError("Gagal menyimpan data: " + err.message);

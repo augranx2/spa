@@ -241,14 +241,19 @@ function paramUlangList(e) {
 }
 
 // Cari baris sampling ulang untuk satu temuan (entry asli + parameter).
+// Kalau kolom "parameter diuji ulang" dibiarkan kosong, baris ulang dianggap
+// menindaklanjuti SELURUH parameter bermasalah pada hasil yang dirujuk —
+// supaya temuan tidak terlihat "belum ditindaklanjuti" hanya karena petugas
+// lupa mencentang parameternya.
 function findResample(entries, entry, paramKey) {
-  return (entries || []).find(
-    (r) =>
-      isResampleEntry(r) &&
-      r.titikSampling === entry.titikSampling &&
-      r.refTanggal === entry.tanggal &&
-      paramUlangList(r).includes(paramKey)
-  ) || null;
+  return (entries || []).find((r) => {
+    if (!isResampleEntry(r)) return false;
+    if (r.titikSampling !== entry.titikSampling) return false;
+    if (r.refTanggal !== entry.tanggal) return false;
+    const daftar = paramUlangList(r);
+    if (daftar.length === 0) return true;
+    return daftar.includes(paramKey);
+  }) || null;
 }
 
 // Status satu temuan: "terbuka" | "menunggu-catatan" | "belum-memenuhi" | "selesai"
