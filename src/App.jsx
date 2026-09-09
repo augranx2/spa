@@ -25,7 +25,7 @@ import {
   QUALI_OPTIONS, statusFor, parseNumericValue, fullDateID, weekKeyForISO,
   weekLabel, findKontrolMingguan, monthDefaultWeekKey,
   JENIS_RUTIN, JENIS_RESAMPLING, isResampleEntry, paramUlangList,
-  findResample, collectFindings, selisihHari,
+  findResample, collectFindings, selisihHari, resolveFinding,
 } from "./narrativeGenerator.js";
 import { useAuth, hasAccess } from "./auth.js";
 
@@ -491,7 +491,17 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
 
   const outlierCutoff = limit.syaratMax !== undefined ? Math.max(limit.syaratMax * 5, 100) : 1000;
   let excludedCount = 0;
-  const data = entries
+  // Urutkan dari tanggal paling awal (kiri) ke paling akhir (kanan) dulu,
+  // baru dipetakan ke titik grafik — supaya sumbu-X selalu berjalan maju
+  // secara kronologis, termasuk saat ada baris sampling ulang di hari
+  // berikutnya. Titik dengan tanggal sama diurutkan menurut titik sampling
+  // supaya urutannya stabil (tidak acak tiap render).
+  const sortedEntries = entries.slice().sort((a, b) => {
+    const byDate = String(a.tanggal || "").localeCompare(String(b.tanggal || ""));
+    if (byDate !== 0) return byDate;
+    return String(a.titikSampling || "").localeCompare(String(b.titikSampling || ""));
+  });
+  const data = sortedEntries
     .map((e) => {
       const raw = e[paramKey];
       if (raw === null || raw === undefined || raw === "") return null;
@@ -973,6 +983,30 @@ function buildStatsSummary(system, entries) {
     const noted = numeric.filter((p) => statusFor(p.raw, paramKey, system.jenis).level >= 2)
       .map((p) => ({ titik: p.titik, tanggal: p.tanggal, hasil: displayValue(p.raw), level: statusFor(p.raw, paramKey, system.jenis).level >= 4 ? "Melebihi Syarat" : statusFor(p.raw, paramKey, system.jenis).level === 3 ? "Action" : "Alert" }));
 
+    // Pasangan temuan Action/di luar Syarat dengan hasil sampling ulangnya
+    // (kalau ada), supaya AI membahas tiap resampling per parameter —
+    // termasuk apakah hasilnya membaik, sama, atau justru lebih buruk.
+    const resampling = [];
+    entries.forEach((e) => {
+      if (isResampleEntry(e)) return;
+      const f = resolveFinding(entries, e, paramKey, system.jenis);
+      if (!f || !f.ulang) return;
+      const nilaiAsli = parseNumericValue(e[paramKey]);
+      const nilaiUlang = parseNumericValue(f.ulang[paramKey]);
+      let arah = "tidak dapat dibandingkan";
+      if (nilaiAsli !== null && nilaiUlang !== null) {
+        arah = nilaiUlang < nilaiAsli ? "membaik (lebih rendah)" : nilaiUlang > nilaiAsli ? "lebih tinggi dari hasil asli" : "sama dengan hasil asli";
+      }
+      resampling.push({
+        titik: e.titikSampling, tanggalAsli: e.tanggal, hasilAsli: displayValue(e[paramKey]),
+        tanggalUlang: f.ulang.tanggal, hasilUlang: displayValue(f.ulang[paramKey]),
+        selisihHari: selisihHari(e.tanggal, f.ulang.tanggal),
+        statusUlang: f.status === "selesai" ? "Memenuhi syarat" : "Masih belum memenuhi",
+        arahPerubahan: arah,
+        catatanTindakLanjut: f.ulang.catatanTindakLanjut || "",
+      });
+    });
+
     stats[paramKey] = {
       label: meta.label, unit: meta.unit,
       limit: limit.syaratMin !== undefined
@@ -981,6 +1015,7 @@ function buildStatsSummary(system, entries) {
       rentang: numeric.length > 0 ? { min: displayValue(points.find((p) => p.value === Math.min(...numeric.map((n) => n.value)))?.raw), max: displayValue(points.find((p) => p.value === Math.max(...numeric.map((n) => n.value)))?.raw) } : null,
       totalTitik: points.length,
       catatan: noted,
+      resampling: resampling,
     };
   });
   return stats;
