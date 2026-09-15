@@ -464,7 +464,7 @@ function ChartTooltip({ active, payload, limit, unit }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white/95 backdrop-blur-xs px-3 py-2 text-xs shadow-xl">
       <p className="mb-1 max-w-[160px] font-semibold text-slate-600">{p.label}</p>
-      <p className="text-sm font-bold" style={{ color: s.color }}>{displayValue(p.value)}{unit ? ` ${unit}` : ""}</p>
+      <p className="text-sm font-bold" style={{ color: s.color }}>{displayValue(p.raw !== undefined ? p.raw : p.value)}{unit ? ` ${unit}` : ""}</p>
       <p className="font-medium" style={{ color: s.color }}>{s.label}</p>
       {p.ulang && <p className="mt-0.5 font-semibold text-sky-700">Hasil sampling ulang</p>}
     </div>
@@ -511,7 +511,11 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
       const ulang = isResampleEntry(e);
       const baseLabel = pointCounts[e.titikSampling] > 1 ? `${e.titikSampling} (${shortDate(e.tanggal)})` : e.titikSampling;
       const label = ulang ? `${baseLabel} ↻` : baseLabel;
-      return { label, value: v, room: e.namaRuangan || e.titikSampling, ulang };
+      // "raw" dipakai untuk TAMPILAN (mis. "<1" apa adanya), "value" untuk
+      // posisi titik & perbandingan limit. parseNumericValue mengubah "<1"
+      // jadi 0.999 supaya bisa dibandingkan secara numerik — itu bukan
+      // angka yang seharusnya dilihat pengguna.
+      return { label, value: v, raw, room: e.namaRuangan || e.titikSampling, ulang };
     })
     .filter(Boolean);
   if (data.length === 0) return null;
@@ -536,7 +540,7 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
         <div>
           <p className="text-xs font-bold text-slate-700">{meta.label} — {systemLabel}</p>
           <p className="text-[11px] text-slate-400">
-            Tertinggi bulan ini: <span className="font-semibold" style={{ color: peakStatus.color }}>{displayValue(peak.value)}{meta.unit ? ` ${meta.unit}` : ""}</span> ({peak.room})
+            Tertinggi bulan ini: <span className="font-semibold" style={{ color: peakStatus.color }}>{displayValue(peak.raw !== undefined ? peak.raw : peak.value)}{meta.unit ? ` ${meta.unit}` : ""}</span> ({peak.room})
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -552,7 +556,7 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
         </div>
       </div>
       <ResponsiveContainer width="100%" height={260}>
-        <ComposedChart data={data} margin={{ top: 10, right: 15, left: 10, bottom: 50 }}>
+        <ComposedChart data={data} margin={{ top: 10, right: 4, left: 10, bottom: 50 }}>
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#0d9488" stopOpacity={0.25} />
@@ -2277,6 +2281,20 @@ function PersyaratanMutuCard({ system, params }) {
 // Rekap Entri Data QC yang disisipkan di dokumen cetak Pengkajian (antara kop
 // dokumen dan Persyaratan Mutu), supaya PDF final memuat juga data mentah
 // yang menjadi dasar narasi — bukan cuma kesimpulannya.
+function ParamHeaderCell({ paramKey }) {
+  const meta = PARAM_META[paramKey];
+  const words = meta.short.split(" ");
+  const first = words[0];
+  const restWords = words.slice(1).join(" ");
+  const restLine = [restWords, meta.unit ? `(${meta.unit})` : ""].filter(Boolean).join(" ");
+  return (
+    <th className="px-2 py-1.5 text-right align-bottom leading-tight">
+      <span className="block">{first}</span>
+      {restLine && <span className="block font-normal normal-case text-slate-400">{restLine}</span>}
+    </th>
+  );
+}
+
 function EntriDataRecapPrint({ system, params, entries }) {
   if (!entries || entries.length === 0) return null;
   const rows = entries.slice().sort((a, b) => {
@@ -2285,7 +2303,7 @@ function EntriDataRecapPrint({ system, params, entries }) {
     return String(a.titikSampling || "").localeCompare(String(b.titikSampling || ""));
   });
   return (
-    <div className="rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
+    <div className="only-print rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
       <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Rekap Entri Data Pengujian (QC)</h3>
       <div className="overflow-x-auto qcrecap-table-wrap">
         <table className="w-full text-[10.5px] qcrecap-table">
@@ -2295,7 +2313,7 @@ function EntriDataRecapPrint({ system, params, entries }) {
               <th className="px-2 py-1.5 w-14">Jenis</th>
               <th className="px-2 py-1.5 w-20">Titik Sampling</th>
               <th className="px-2 py-1.5 w-28">Nama Ruangan</th>
-              {params.map((p) => <th key={p} className="px-2 py-1.5 text-right">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>)}
+              {params.map((p) => <ParamHeaderCell key={p} paramKey={p} />)}
             </tr>
           </thead>
           <tbody>
@@ -2696,9 +2714,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       <style>{`
         .qcrecap-table-wrap { overflow-x: auto; }
         @media print {
-          @page { size: A4 landscape; margin: 0.6cm; }
-          main { padding: 0 !important; max-width: none !important; margin: 0 !important; }
-          .print-card { padding: 0.55rem !important; }
+          @page { size: A4 landscape; margin: 1cm; }
           .qcrecap-table-wrap { overflow: visible !important; width: auto !important; }
           .qcrecap-table { width: 100% !important; font-size: 7px !important; table-layout: auto; }
           .qcrecap-table th, .qcrecap-table td {
