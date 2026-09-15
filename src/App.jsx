@@ -2291,11 +2291,11 @@ function EntriDataRecapPrint({ system, params, entries }) {
         <table className="w-full text-[10.5px] qcrecap-table">
           <thead>
             <tr className="border-b border-slate-200 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50">
-              <th className="px-2 py-1.5">Tanggal</th>
-              <th className="px-2 py-1.5">Jenis</th>
-              <th className="px-2 py-1.5">Titik Sampling</th>
-              <th className="px-2 py-1.5">Nama Ruangan</th>
-              {params.map((p) => <th key={p} className="px-2 py-1.5 text-right whitespace-nowrap">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>)}
+              <th className="px-2 py-1.5 w-16">Tanggal</th>
+              <th className="px-2 py-1.5 w-14">Jenis</th>
+              <th className="px-2 py-1.5 w-20">Titik Sampling</th>
+              <th className="px-2 py-1.5 w-28">Nama Ruangan</th>
+              {params.map((p) => <th key={p} className="px-2 py-1.5 text-right">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -2303,9 +2303,9 @@ function EntriDataRecapPrint({ system, params, entries }) {
               const ulang = isResampleEntry(e);
               return (
                 <tr key={e.id} className={`border-b border-slate-100 last:border-0 ${ulang ? "bg-sky-50/40" : ""}`}>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{isoToID(e.tanggal)}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{ulang ? `Ulang${e.refTanggal ? ` (ref ${isoToID(e.refTanggal)})` : ""}` : "Rutin"}</td>
-                  <td className="px-2 py-1.5 font-semibold text-slate-800 whitespace-nowrap">{e.titikSampling || "-"}</td>
+                  <td className="px-2 py-1.5">{isoToID(e.tanggal)}</td>
+                  <td className="px-2 py-1.5">{ulang ? `Ulang${e.refTanggal ? ` (ref ${isoToID(e.refTanggal)})` : ""}` : "Rutin"}</td>
+                  <td className="px-2 py-1.5 font-semibold text-slate-800">{e.titikSampling || "-"}</td>
                   <td className="px-2 py-1.5">{e.namaRuangan || "-"}</td>
                   {params.map((p) => {
                     const st = statusFor(e[p], p, system.jenis);
@@ -2696,10 +2696,19 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       <style>{`
         .qcrecap-table-wrap { overflow-x: auto; }
         @media print {
-          @page { size: A4 landscape; margin: 1cm; }
+          @page { size: A4 landscape; margin: 0.6cm; }
+          main { padding: 0 !important; max-width: none !important; margin: 0 !important; }
+          .print-card { padding: 0.55rem !important; }
           .qcrecap-table-wrap { overflow: visible !important; width: auto !important; }
-          .qcrecap-table { width: 100% !important; font-size: 7px !important; table-layout: fixed; }
-          .qcrecap-table th, .qcrecap-table td { padding: 1.5px 2px !important; overflow-wrap: break-word; }
+          .qcrecap-table { width: 100% !important; font-size: 7px !important; table-layout: auto; }
+          .qcrecap-table th, .qcrecap-table td {
+            padding: 2px 3px !important;
+            white-space: normal !important;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            vertical-align: top;
+            line-height: 1.25;
+          }
           .qcrecap-table thead { display: table-header-group; }
           .qcrecap-table tr { page-break-inside: avoid; break-inside: avoid; }
         }
