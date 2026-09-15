@@ -2228,6 +2228,104 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
 // QC men-acc Formulir Hasil, lalu QA menyusun & meng-approve Pengkajian.
 // Stepper ini membuat urutannya terlihat jelas (bukan cuma tombol lepas),
 // beserta status tiap tahap, supaya orang tidak bingung sedang di mana.
+function PersyaratanMutuCard({ system, params }) {
+  return (
+    <div className="rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
+      <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Persyaratan Mutu &amp; Batas Limit</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50">
+              <th className="px-3 py-2">Parameter</th>
+              <th className="px-3 py-2 text-right">Syarat</th><th className="px-3 py-2 text-right">Alert Limit</th><th className="px-3 py-2 text-right">Action Limit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {params.map((p) => {
+              const meta = PARAM_META[p];
+              const limit = getLimit(p, system.jenis);
+              if (limit.qualitative) {
+                return (
+                  <tr key={p} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                    <td className="px-3 py-2 font-medium">{meta.short}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-800">{limit.passValue}</td>
+                    <td className="px-3 py-2 text-right text-slate-400">-</td>
+                    <td className="px-3 py-2 text-right text-slate-400">-</td>
+                  </tr>
+                );
+              }
+              const syarat = limit.syaratMin !== undefined ? `${limit.syaratMin}–${limit.syaratMax}` : `≤ ${limit.syaratMax}`;
+              const alert = limit.alertMin !== undefined ? `≤${limit.alertMin} / ≥${limit.alertMax}` : `≥ ${limit.alertMax}`;
+              const action = limit.actionMin !== undefined ? `≤${limit.actionMin} / ≥${limit.actionMax}` : `≥ ${limit.actionMax}`;
+              return (
+                <tr key={p} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                  <td className="px-3 py-2 font-medium">{meta.short}{meta.unit ? ` (${meta.unit})` : ""}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-slate-800">{syarat}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-amber-700">{alert}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-orange-700">{action}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-3.5 pt-2 border-t border-slate-100"><LegendRow /></div>
+    </div>
+  );
+}
+
+// Rekap Entri Data QC yang disisipkan di dokumen cetak Pengkajian (antara kop
+// dokumen dan Persyaratan Mutu), supaya PDF final memuat juga data mentah
+// yang menjadi dasar narasi — bukan cuma kesimpulannya.
+function EntriDataRecapPrint({ system, params, entries }) {
+  if (!entries || entries.length === 0) return null;
+  const rows = entries.slice().sort((a, b) => {
+    const byDate = String(a.tanggal || "").localeCompare(String(b.tanggal || ""));
+    if (byDate !== 0) return byDate;
+    return String(a.titikSampling || "").localeCompare(String(b.titikSampling || ""));
+  });
+  return (
+    <div className="rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
+      <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Rekap Entri Data Pengujian (QC)</h3>
+      <div className="overflow-x-auto qcrecap-table-wrap">
+        <table className="w-full text-[10.5px] qcrecap-table">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50">
+              <th className="px-2 py-1.5">Tanggal</th>
+              <th className="px-2 py-1.5">Jenis</th>
+              <th className="px-2 py-1.5">Titik Sampling</th>
+              <th className="px-2 py-1.5">Nama Ruangan</th>
+              {params.map((p) => <th key={p} className="px-2 py-1.5 text-right whitespace-nowrap">{PARAM_META[p].short}{PARAM_META[p].unit ? ` (${PARAM_META[p].unit})` : ""}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((e) => {
+              const ulang = isResampleEntry(e);
+              return (
+                <tr key={e.id} className={`border-b border-slate-100 last:border-0 ${ulang ? "bg-sky-50/40" : ""}`}>
+                  <td className="px-2 py-1.5 whitespace-nowrap">{isoToID(e.tanggal)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap">{ulang ? `Ulang${e.refTanggal ? ` (ref ${isoToID(e.refTanggal)})` : ""}` : "Rutin"}</td>
+                  <td className="px-2 py-1.5 font-semibold text-slate-800 whitespace-nowrap">{e.titikSampling || "-"}</td>
+                  <td className="px-2 py-1.5">{e.namaRuangan || "-"}</td>
+                  {params.map((p) => {
+                    const st = statusFor(e[p], p, system.jenis);
+                    return (
+                      <td key={p} className={`px-2 py-1.5 text-right font-semibold whitespace-nowrap ${st.level >= 4 ? "text-red-700" : st.level >= 3 ? "text-orange-700" : st.level >= 2 ? "text-amber-700" : "text-slate-700"}`}>
+                        {displayValue(e[p])}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2.5 text-[10px] text-slate-400">Total {rows.length} baris data. Nilai berwarna menandakan status terhadap Alert/Action Limit — lihat Persyaratan Mutu di bawah.</p>
+    </div>
+  );
+}
+
 function WorkflowStepper({ active, onGo, entriesCount, qcFinalApproved, dikajiDone, pengkajianFinalized, canSeeReportHasil }) {
   const steps = [
     {
@@ -2595,6 +2693,17 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
 
   return (
     <div className="space-y-6" data-print-blocked={!canPrint}>
+      <style>{`
+        .qcrecap-table-wrap { overflow-x: auto; }
+        @media print {
+          @page { size: A4 landscape; margin: 1cm; }
+          .qcrecap-table-wrap { overflow: visible !important; width: auto !important; }
+          .qcrecap-table { width: 100% !important; font-size: 7px !important; table-layout: fixed; }
+          .qcrecap-table th, .qcrecap-table td { padding: 1.5px 2px !important; overflow-wrap: break-word; }
+          .qcrecap-table thead { display: table-header-group; }
+          .qcrecap-table tr { page-break-inside: avoid; break-inside: avoid; }
+        }
+      `}</style>
       <div className="print-blocked-notice">Akses print dibatasi untuk Staff/Supervisor/Manager ke atas.</div>
       <div className="no-print flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200/80 shadow-2xs">
         <button onClick={onBack} className="inline-flex items-center gap-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2 text-xs font-bold transition shadow-2xs">
@@ -2666,58 +2775,23 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           <KontrolMingguanPanel systemKey={systemKey} jenis={system.jenis} monthKey={monthKey} entries={entries} records={kontrolRecords}
             canInput={canInputQC} saving={kontrolSaving} onSave={handleSaveKontrolMingguan} />
 
-          <div className="no-print flex justify-end">
-            <button onClick={() => setSubView("pengkajian")}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 shadow-xs">
-              Lanjut ke Pengkajian &amp; Narasi <ChevronRight size={14} />
-            </button>
-          </div>
+          <PersyaratanMutuCard system={system} params={params} />
+
+          {(isQC || isQA) && (
+            <div className="no-print flex justify-end">
+              <button onClick={() => setMode("reportHasil")}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 shadow-xs">
+                Lanjut ke Report Hasil <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </>
       )}
 
       {subView === "pengkajian" && (
       <>
-      <div className="rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
-        <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Persyaratan Mutu &amp; Batas Limit</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50">
-                <th className="px-3 py-2">Parameter</th>
-                <th className="px-3 py-2 text-right">Syarat</th><th className="px-3 py-2 text-right">Alert Limit</th><th className="px-3 py-2 text-right">Action Limit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {params.map((p) => {
-                const meta = PARAM_META[p];
-                const limit = getLimit(p, system.jenis);
-                if (limit.qualitative) {
-                  return (
-                    <tr key={p} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
-                      <td className="px-3 py-2 font-medium">{meta.short}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-slate-800">{limit.passValue}</td>
-                      <td className="px-3 py-2 text-right text-slate-400">-</td>
-                      <td className="px-3 py-2 text-right text-slate-400">-</td>
-                    </tr>
-                  );
-                }
-                const syarat = limit.syaratMin !== undefined ? `${limit.syaratMin}–${limit.syaratMax}` : `≤ ${limit.syaratMax}`;
-                const alert = limit.alertMin !== undefined ? `≤${limit.alertMin} / ≥${limit.alertMax}` : `≥ ${limit.alertMax}`;
-                const action = limit.actionMin !== undefined ? `≤${limit.actionMin} / ≥${limit.actionMax}` : `≥ ${limit.actionMax}`;
-                return (
-                  <tr key={p} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
-                    <td className="px-3 py-2 font-medium">{meta.short}{meta.unit ? ` (${meta.unit})` : ""}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-slate-800">{syarat}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-amber-700">{alert}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-orange-700">{action}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-3.5 pt-2 border-t border-slate-100"><LegendRow /></div>
-      </div>
+      <EntriDataRecapPrint system={system} params={params} entries={entries} />
+      <PersyaratanMutuCard system={system} params={params} />
 
       {canViewPembahasan ? (
         <>
