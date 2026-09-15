@@ -3,13 +3,13 @@ import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
   LineChart, Line, ComposedChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ReferenceArea, ResponsiveContainer,
+  ReferenceLine, ReferenceArea, ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Printer, Loader2, Sparkles, RotateCcw,
   AlertTriangle, CheckCircle2, XCircle, FileQuestion, LayoutDashboard,
   Droplet, Flame, Layers, LogIn, LogOut, User, History, Lock, Calendar as CalendarIcon,
-  Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft, Download,
+  Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft, Download, Eye, EyeOff,
 } from "lucide-react";
 import {
   fetchMaster, fetchEntries, saveEntries as apiSaveEntries,
@@ -1700,6 +1700,76 @@ function NotificationsPage({ notifications = [], resolved = [], onSelectNotifica
 /* =========================================================================
    11. HALAMAN UTAMA / SYSTEM DETAIL / REPORT HASIL
    ========================================================================= */
+const DONUT_COLORS = { terkendali: "#0f766e", perhatian: "#ea580c", melebihi: "#dc2626", belum: "#94a3b8" };
+
+// Donut ringkasan status kelima sistem — warna & label konsisten dengan
+// StatCard dan badge status yang sudah dipakai di seluruh aplikasi.
+function StatusDonutChart({ terkendali, perhatian, melebihi, belum, total }) {
+  const data = [
+    { key: "terkendali", label: "Terkendali", value: terkendali, color: DONUT_COLORS.terkendali },
+    { key: "perhatian", label: "Perlu Perhatian", value: perhatian, color: DONUT_COLORS.perhatian },
+    { key: "melebihi", label: "Melebihi Syarat", value: melebihi, color: DONUT_COLORS.melebihi },
+    { key: "belum", label: "Belum Ada Data", value: belum, color: DONUT_COLORS.belum },
+  ].filter((d) => d.value > 0);
+
+  return (
+    <div className="flex items-center gap-5">
+      <div className="relative h-32 w-32 shrink-0">
+        {data.length === 0 ? (
+          <div className="flex h-full w-full items-center justify-center rounded-full border-4 border-slate-100 text-[11px] text-slate-300">Tidak ada data</div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={data} dataKey="value" nameKey="label" innerRadius={42} outerRadius={62} paddingAngle={data.length > 1 ? 3 : 0} stroke="none" isAnimationActive={false}>
+                {data.map((d) => <Cell key={d.key} fill={d.color} />)}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        )}
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl font-extrabold text-slate-800">{total}</span>
+          <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Sistem</span>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        {[
+          { label: "Terkendali", value: terkendali, color: DONUT_COLORS.terkendali },
+          { label: "Perlu Perhatian", value: perhatian, color: DONUT_COLORS.perhatian },
+          { label: "Melebihi Syarat", value: melebihi, color: DONUT_COLORS.melebihi },
+          { label: "Belum Ada Data", value: belum, color: DONUT_COLORS.belum },
+        ].map((d) => (
+          <div key={d.label} className="flex items-center gap-2 text-xs">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: d.color }} />
+            <span className="text-slate-500 flex-1">{d.label}</span>
+            <span className="font-bold text-slate-700">{d.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Grafik mini (sparkline) tren level harian satu sistem sepanjang bulan
+// berjalan — memberi gambaran cepat "sudah beberapa hari terkendali" atau
+// "baru saja naik" tanpa harus membuka detail sistem.
+function SystemSparkline({ trend, level }) {
+  if (!trend || trend.length < 2) {
+    return <span className="text-[10px] text-slate-300 italic">Data belum cukup untuk tren</span>;
+  }
+  const color = STATUS_TINT[level]?.fg || "#0f766e";
+  const data = trend.map((t) => ({ x: t.tanggal, y: t.level }));
+  return (
+    <div className="h-8 w-20">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 3, right: 2, bottom: 3, left: 2 }}>
+          <YAxis domain={[0, 4]} hide />
+          <Line type="monotone" dataKey="y" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function Dashboard({ monthKey, setMonthKey, statusIndex, loadingStatus, statusError, onOpen }) {
   const perluCount = SYSTEMS.filter((s) => (statusIndex[s.key]?.level || 0) === 3).length;
   const tmsCount = SYSTEMS.filter((s) => (statusIndex[s.key]?.level || 0) >= 4).length;
@@ -1722,12 +1792,24 @@ function Dashboard({ monthKey, setMonthKey, statusIndex, loadingStatus, statusEr
         <p className="rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200 font-semibold">{statusError}</p>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <StatCard icon={<Layers size={17} />} iconColor="#0f766e" tint="#ccfbf1" border="#99f6e4" value={SYSTEMS.length} label="Total Sistem" />
-        <StatCard icon={<CheckCircle2 size={17} />} iconColor="#15803d" tint="#dcfce7" border="#bbf7d0" value={SYSTEMS.filter((s) => statusIndex[s.key]?.hasData && (statusIndex[s.key]?.level || 0) < 3).length} label="Terkendali" />
-        <StatCard icon={<AlertTriangle size={17} />} iconColor="#c2410c" tint="#ffedd5" border="#fed7aa" value={perluCount} label="Perlu Perhatian" />
-        <StatCard icon={<XCircle size={17} />} iconColor="#b91c1c" tint="#fee2e2" border="#fecaca" value={tmsCount} label="Melebihi Syarat" />
-        <StatCard icon={<FileQuestion size={17} />} iconColor="#475569" tint="#f1f5f9" border="#e2e8f0" value={SYSTEMS.filter((s) => !statusIndex[s.key]?.hasData).length} label="Belum Ada Data" />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,320px)_1fr]">
+        <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-xs">
+          <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">Ringkasan Status</h2>
+          <StatusDonutChart
+            total={SYSTEMS.length}
+            terkendali={SYSTEMS.filter((s) => statusIndex[s.key]?.hasData && (statusIndex[s.key]?.level || 0) < 3).length}
+            perhatian={perluCount}
+            melebihi={tmsCount}
+            belum={SYSTEMS.filter((s) => !statusIndex[s.key]?.hasData).length}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <StatCard icon={<Layers size={17} />} iconColor="#0f766e" tint="#ccfbf1" border="#99f6e4" value={SYSTEMS.length} label="Total Sistem" />
+          <StatCard icon={<CheckCircle2 size={17} />} iconColor="#15803d" tint="#dcfce7" border="#bbf7d0" value={SYSTEMS.filter((s) => statusIndex[s.key]?.hasData && (statusIndex[s.key]?.level || 0) < 3).length} label="Terkendali" />
+          <StatCard icon={<AlertTriangle size={17} />} iconColor="#c2410c" tint="#ffedd5" border="#fed7aa" value={perluCount} label="Perlu Perhatian" />
+          <StatCard icon={<XCircle size={17} />} iconColor="#b91c1c" tint="#fee2e2" border="#fecaca" value={tmsCount} label="Melebihi Syarat" />
+          <StatCard icon={<FileQuestion size={17} />} iconColor="#475569" tint="#f1f5f9" border="#e2e8f0" value={SYSTEMS.filter((s) => !statusIndex[s.key]?.hasData).length} label="Belum Ada Data" />
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -1752,7 +1834,8 @@ function Dashboard({ monthKey, setMonthKey, statusIndex, loadingStatus, statusEr
                     <p className="text-xs text-slate-400">{loadingStatus ? "Memuat..." : st?.hasData ? "Ada data pengujian periode ini" : "Belum ada data pengujian periode ini"}</p>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-3">
+                  {!loadingStatus && st?.hasData && <SystemSparkline trend={st.trend} level={level} />}
                   {loadingStatus ? <Loader2 className="animate-spin text-slate-300" size={18} /> : <StatusPill level={st?.level || 0} hasData={!!st?.hasData} />}
                   <ChevronRight size={16} className="text-slate-300 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-teal-700" />
                 </div>
@@ -1811,7 +1894,7 @@ function LegendRow() {
 /* =========================================================================
    12. REPORT HASIL PEMERIKSAAN (FORMULIR QC FISIK DIGITIZED)
    ========================================================================= */
-function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token, onBack, kontrolRecords = [], masterPoints = [] }) {
+function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token, onBack, kontrolRecords = [], masterPoints = [], pengkajianDikajiDone = false, pengkajianFinalized = false, onGoStep }) {
   const toast = useToast();
   const system = SYSTEMS.find((s) => s.key === systemKey);
   const docNo = DOC_NUMBERS[systemKey];
@@ -1940,6 +2023,20 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
           </button>
         )}
       </div>
+
+      {onGoStep && (
+        <div className="no-print mb-4">
+          <WorkflowStepper
+            active="reportHasil"
+            onGo={(key) => onGoStep(key)}
+            entriesCount={entriesForMonth.length}
+            qcFinalApproved={!!meta?.diperiksa?.nama}
+            dikajiDone={pengkajianDikajiDone}
+            pengkajianFinalized={pengkajianFinalized}
+            canSeeReportHasil={true}
+          />
+        </div>
+      )}
 
       {errorMsg && <p className="no-print mb-4 rounded-2xl bg-red-50 p-3.5 text-xs text-red-600 border border-red-200">{errorMsg}</p>}
 
@@ -2127,6 +2224,85 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
 /* =========================================================================
    13. SYSTEM DETAIL (PENGKAJIAN QA TREN AIR)
    ========================================================================= */
+// Alur kerja SPA punya 3 tahap oleh 2 departemen berbeda: QC mengisi data,
+// QC men-acc Formulir Hasil, lalu QA menyusun & meng-approve Pengkajian.
+// Stepper ini membuat urutannya terlihat jelas (bukan cuma tombol lepas),
+// beserta status tiap tahap, supaya orang tidak bingung sedang di mana.
+function WorkflowStepper({ active, onGo, entriesCount, qcFinalApproved, dikajiDone, pengkajianFinalized, canSeeReportHasil }) {
+  const steps = [
+    {
+      key: "entri",
+      no: 1,
+      label: "Entri Data",
+      sub: "QC",
+      status: qcFinalApproved || pengkajianFinalized
+        ? { text: "Terkunci", tone: "done" }
+        : entriesCount > 0
+          ? { text: `${entriesCount} baris`, tone: "progress" }
+          : { text: "Belum diisi", tone: "idle" },
+    },
+    {
+      key: "reportHasil",
+      no: 2,
+      label: "Report Hasil",
+      sub: "Acc QC",
+      status: qcFinalApproved
+        ? { text: "Final", tone: "done" }
+        : entriesCount > 0
+          ? { text: "Menunggu Acc", tone: "progress" }
+          : { text: "Belum ada data", tone: "idle" },
+    },
+    {
+      key: "pengkajian",
+      no: 3,
+      label: "Pengkajian",
+      sub: "QA",
+      status: pengkajianFinalized
+        ? { text: "Final", tone: "done" }
+        : dikajiDone
+          ? { text: "Menunggu Mengetahui", tone: "progress" }
+          : qcFinalApproved
+            ? { text: "Bisa disusun", tone: "progress" }
+            : { text: "Menunggu QC", tone: "idle" },
+    },
+  ];
+  const toneClass = {
+    done: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    progress: "bg-amber-50 text-amber-700 border-amber-200",
+    idle: "bg-slate-100 text-slate-500 border-slate-200",
+  };
+
+  return (
+    <div className="no-print grid grid-cols-1 gap-2 sm:grid-cols-3">
+      {steps.map((s, idx) => {
+        const isActive = active === s.key;
+        const disabled = s.key === "reportHasil" && !canSeeReportHasil;
+        return (
+          <button key={s.key} disabled={disabled} onClick={() => onGo(s.key)}
+            className={`group relative flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
+              isActive ? "border-teal-700 bg-teal-900 text-white shadow-sm" : "border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/40"
+            } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}>
+            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+              isActive ? "bg-white/15 text-white" : s.status.tone === "done" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+            }`}>
+              {s.status.tone === "done" ? <CheckCheck size={14} /> : s.no}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className={`text-xs font-bold ${isActive ? "text-white" : "text-slate-800"}`}>{s.label} <span className={`font-normal ${isActive ? "text-teal-200" : "text-slate-400"}`}>· {s.sub}</span></p>
+              <span className={`mt-0.5 inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${isActive ? "border-white/25 bg-white/10 text-white" : toneClass[s.status.tone]}`}>
+                {s.status.text}
+              </span>
+            </div>
+            {idx < steps.length - 1 && (
+              <ChevronRight size={14} className={`hidden shrink-0 sm:block ${isActive ? "text-teal-300" : "text-slate-300"} absolute -right-2.5 top-1/2 -translate-y-1/2 z-10 bg-slate-50 rounded-full`} />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, session, token }) {
   const system = SYSTEMS.find((s) => s.key === systemKey);
   const params = PARAMS_BY_JENIS[system.jenis] || [];
@@ -2137,6 +2313,12 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
   const isQA = isAdmin || (!isTamu && session?.departemen === "QA");
   const isQC = isAdmin || (!isTamu && session?.departemen === "QC");
   const [mode, setMode] = useState("pengkajian");
+  // Tab dalam halaman utama: "entri" (QC input data) atau "pengkajian"
+  // (QA menyusun narasi & approval). Digabung dengan mode==="reportHasil"
+  // jadi 3 langkah alur kerja yang ditampilkan di WorkflowStepper.
+  // Default tab menyesuaikan peran: QC murni mendarat di Entri Data,
+  // selain itu (QA/Admin/Tamu/publik) mendarat di ringkasan Pengkajian.
+  const [subView, setSubView] = useState(isQC && !isQA ? "entri" : "pengkajian");
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -2400,7 +2582,14 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           setMode("pengkajian");
           fetchReportHasil(systemKey, monthKey).then(setReportHasilMeta).catch(() => {});
         }}
-        kontrolRecords={kontrolRecords} masterPoints={masterPoints} />
+        kontrolRecords={kontrolRecords} masterPoints={masterPoints}
+        pengkajianDikajiDone={!!signoff?.dinilai?.nama}
+        pengkajianFinalized={pengkajianFinalized}
+        onGoStep={(key) => {
+          if (key === "reportHasil") return;
+          setMode("pengkajian");
+          setSubView(key);
+        }} />
     );
   }
 
@@ -2412,18 +2601,28 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           <ArrowLeft size={14} className="text-teal-900" /> Kembali ke Dashboard
         </button>
         <div className="flex flex-wrap items-center gap-2">
-          {(isQC || isQA) && (
-            <button onClick={() => setMode("reportHasil")} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-50 hover:bg-teal-100/80 border border-teal-200/80 text-teal-950 px-3.5 py-2 text-xs font-bold transition shadow-2xs">
-              <FileCheck2 size={14} className="text-teal-800" /> {isQC ? "Report Hasil Pemeriksaan" : "Lihat Formulir QC"}
-            </button>
-          )}
-          {isQA && canPrint && (
+          {isQA && canPrint && subView === "pengkajian" && (
             <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-900 hover:bg-teal-950 text-white px-3.5 py-2 text-xs font-semibold transition shadow-xs">
               <Printer size={14} className="text-teal-300" /> Download / Print PDF
             </button>
           )}
         </div>
       </div>
+
+      {(isQC || isQA) && (
+        <WorkflowStepper
+          active={subView}
+          onGo={(key) => {
+            if (key === "reportHasil") { setMode("reportHasil"); return; }
+            setSubView(key);
+          }}
+          entriesCount={entries.length}
+          qcFinalApproved={qcFinalApproved}
+          dikajiDone={!!signoff?.dinilai?.nama}
+          pengkajianFinalized={pengkajianFinalized}
+          canSeeReportHasil={isQC || isQA}
+        />
+      )}
 
       <div className="overflow-hidden rounded-3xl border border-slate-200/80 print-card shadow-sm">
         <div className="relative overflow-hidden bg-gradient-to-r from-teal-950 via-teal-900 to-teal-800 px-6 py-4">
@@ -2448,23 +2647,36 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         </div>
       </div>
 
-      {saveError && <p className="no-print rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200">{saveError}</p>}
+      {subView === "entri" && (
+        <>
+          {saveError && <p className="no-print rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200">{saveError}</p>}
 
-      <div className="no-print">
-        <EntryEditor system={system} masterPoints={masterPoints} entries={entries} setEntries={setEntries} onSave={saveEntriesOnly} saving={saving}
-          canInput={canInputQC} canDeleteExisting={canDeleteQC}
-          accessNote={
-            !session ? "Login untuk mengisi data"
-            : recordsLocked ? "Pengkajian sudah final — data terkunci"
-            : qcFinalApproved ? "Formulir QC sudah final di-acc — data terkunci"
-            : "Hanya Staff/Supervisor/Manager QC yang bisa mengisi data"
-          } />
-      </div>
+          <div className="no-print">
+            <EntryEditor system={system} masterPoints={masterPoints} entries={entries} setEntries={setEntries} onSave={saveEntriesOnly} saving={saving}
+              canInput={canInputQC} canDeleteExisting={canDeleteQC}
+              accessNote={
+                !session ? "Login untuk mengisi data"
+                : recordsLocked ? "Pengkajian sudah final — data terkunci"
+                : qcFinalApproved ? "Formulir QC sudah final di-acc — data terkunci"
+                : "Hanya Staff/Supervisor/Manager QC yang bisa mengisi data"
+              } />
+          </div>
 
-      {kontrolError && <p className="no-print rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200">{kontrolError}</p>}
-      <KontrolMingguanPanel systemKey={systemKey} jenis={system.jenis} monthKey={monthKey} entries={entries} records={kontrolRecords}
-        canInput={canInputQC} saving={kontrolSaving} onSave={handleSaveKontrolMingguan} />
+          {kontrolError && <p className="no-print rounded-2xl bg-red-50 p-4 text-xs text-red-600 border border-red-200">{kontrolError}</p>}
+          <KontrolMingguanPanel systemKey={systemKey} jenis={system.jenis} monthKey={monthKey} entries={entries} records={kontrolRecords}
+            canInput={canInputQC} saving={kontrolSaving} onSave={handleSaveKontrolMingguan} />
 
+          <div className="no-print flex justify-end">
+            <button onClick={() => setSubView("pengkajian")}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-teal-800 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-900 shadow-xs">
+              Lanjut ke Pengkajian &amp; Narasi <ChevronRight size={14} />
+            </button>
+          </div>
+        </>
+      )}
+
+      {subView === "pengkajian" && (
+      <>
       <div className="rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
         <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Persyaratan Mutu &amp; Batas Limit</h3>
         <div className="overflow-x-auto">
@@ -2641,6 +2853,8 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
           <p className="text-xs text-slate-500">Grafik, pembahasan, dan pengkajian lengkap hanya bisa dilihat oleh akun yang sudah login.</p>
         </div>
       )}
+      </>
+      )}
     </div>
   );
 }
@@ -2648,6 +2862,118 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
 /* =========================================================================
    14. AUTH MODALS
    ========================================================================= */
+// Halaman login penuh — split kiri (branding, gaya teal SPA) & kanan
+// (form). Ditampilkan sebelum dashboard bisa diakses sama sekali; login
+// modal (di bawah) tetap dipertahankan untuk kasus sesi kedaluwarsa saat
+// sedang membuka halaman tertentu.
+function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (ev) => {
+    ev.preventDefault();
+    setSubmitting(true);
+    setError("");
+    try {
+      await onLogin(username.trim(), password);
+    } catch (err) {
+      setError(err.message || "Login gagal.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const fitur = [
+    { icon: <Droplet size={15} />, text: "Traceability penuh — tiap titik sampling, tanggal, dan hasil tercatat rapi per sistem air." },
+    { icon: <ShieldCheck size={15} />, text: "Mengacu Standar CPOB terkini, dengan batas Alert/Action Limit otomatis terpantau." },
+    { icon: <History size={15} />, text: "Audit trail mencatat setiap input, approval, dan perubahan data secara berjenjang." },
+  ];
+
+  return (
+    <div className="min-h-screen w-full bg-slate-50 font-sans lg:flex">
+      <div className="relative hidden overflow-hidden bg-gradient-to-br from-teal-950 via-teal-900 to-teal-800 px-10 py-12 text-white lg:flex lg:w-[46%] lg:flex-col lg:justify-between">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-teal-400/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-28 -left-16 h-72 w-72 rounded-full bg-teal-500/10 blur-3xl" />
+
+        <div className="relative flex items-center gap-3">
+          <img src="/logo-rama.png" alt="Logo" className="h-10 w-10 object-contain brightness-0 invert" />
+          <div className="leading-tight">
+            <p className="text-sm font-bold">PT. Rama Emerald Multi Sukses</p>
+            <p className="text-[11px] text-teal-200">SPA Monitoring — Sistem Pengolahan Air</p>
+          </div>
+        </div>
+
+        <div className="relative space-y-5">
+          <h1 className="text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">
+            Mutu air, <span className="text-teal-300">terpantau sampai ke setiap titik.</span>
+          </h1>
+          <p className="max-w-sm text-sm leading-relaxed text-teal-100/90">
+            Pemantauan Purified Water, Water For Injection, dan Pure Steam secara real-time — dari entri data QC hingga
+            pengkajian dan approval QA, dalam satu alur kerja yang tercatat penuh.
+          </p>
+          <div className="space-y-3 pt-2">
+            {fitur.map((f, i) => (
+              <div key={i} className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-teal-500/20 text-teal-200">{f.icon}</span>
+                <p className="text-xs leading-relaxed text-teal-50/90">{f.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <p className="relative text-[11px] text-teal-300/70">Aktivitas login, input, dan approval tercatat dalam audit trail.</p>
+      </div>
+
+      <div className="flex flex-1 items-center justify-center p-6 sm:p-10">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <img src="/logo-rama.png" alt="Logo" className="h-10 w-10 object-contain" />
+            <div className="leading-tight">
+              <p className="text-sm font-bold text-slate-800">PT. Rama Emerald Multi Sukses</p>
+              <p className="text-[11px] text-slate-400">SPA Monitoring — Sistem Pengolahan Air</p>
+            </div>
+          </div>
+
+          <h2 className="text-2xl font-extrabold text-slate-800">Masuk ke SPA Monitoring</h2>
+          <p className="mt-1.5 text-xs text-slate-400">Gunakan username dan password yang diberikan Administrator sistem.</p>
+
+          <form onSubmit={submit} className="mt-6 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600">Username</label>
+              <input autoFocus type="text" placeholder="username personil" value={username} onChange={(ev) => setUsername(ev.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-100" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600">Password</label>
+              <div className="relative">
+                <input type={showPassword ? "text" : "password"} placeholder="••••••••" value={password} onChange={(ev) => setPassword(ev.target.value)}
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 pr-10 text-sm focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-100" />
+                <button type="button" onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-slate-400 hover:text-slate-600" tabIndex={-1}>
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            {error && <p className="rounded-xl bg-red-50 p-2.5 text-xs text-red-600 border border-red-200">{error}</p>}
+
+            <button type="submit" disabled={submitting || !username || !password}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-900 disabled:opacity-60 shadow-sm transition">
+              {submitting ? <Loader2 size={15} className="animate-spin" /> : null} Masuk
+            </button>
+          </form>
+
+          <p className="mt-5 text-center text-[11px] text-slate-400">Lupa password? Hubungi Administrator sistem untuk direset.</p>
+          <p className="mt-6 text-center text-[10px] text-slate-300">Aktivitas login, input, dan approval tercatat dalam audit trail.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoginModal({ onClose, onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -3157,6 +3483,13 @@ function AppInner() {
 
   if (checking) {
     return <div className="flex h-screen items-center justify-center text-slate-400 font-sans"><Loader2 className="mr-2 animate-spin" size={18} /> Memuat sesi...</div>;
+  }
+
+  // Seluruh aplikasi (dashboard, entri data, dst) hanya bisa diakses setelah
+  // login. Halaman /verify (verifikasi QR publik untuk pihak eksternal
+  // seperti BPOM) tetap terbuka karena ditangani terpisah di komponen App().
+  if (!session) {
+    return <LoginPage onLogin={doLogin} />;
   }
 
   return (

@@ -1247,11 +1247,21 @@ function getStatusIndex_(month) {
     let maxLevel = 0;
     const params = PARAMS_BY_JENIS[cfg.jenis] || [];
     const weekKeysThisMonth = {};
+    // Tren ringkas per hari (dipakai sparkline mini di Dashboard): hanya
+    // tanggal + level tertinggi hari itu, BUKAN seluruh baris data, supaya
+    // payload tetap kecil dan cepat dimuat.
+    const levelPerDay = {};
     entries.forEach(function (e) {
+      let dayLevel = 0;
       params.forEach(function (p) {
         const lvl = levelFor_(e[p], p, cfg.jenis);
         if (lvl > maxLevel) maxLevel = lvl;
+        if (lvl > dayLevel) dayLevel = lvl;
       });
+      if (e.tanggal) {
+        const prev = levelPerDay[e.tanggal] || 0;
+        if (dayLevel > prev) levelPerDay[e.tanggal] = dayLevel;
+      }
       const wk = weekKeyForISO_(e.tanggal);
       if (wk) weekKeysThisMonth[wk] = true;
     });
@@ -1271,7 +1281,10 @@ function getStatusIndex_(month) {
         if (lvlNegLAL > maxLevel) maxLevel = lvlNegLAL;
       }
     });
-    out[key] = { level: maxLevel, hasData: entries.length > 0 };
+    const trend = Object.keys(levelPerDay).sort().map(function (tgl) {
+      return { tanggal: tgl, level: levelPerDay[tgl] };
+    });
+    out[key] = { level: maxLevel, hasData: entries.length > 0, trend: trend };
   });
   return { month: month, status: out };
 }
