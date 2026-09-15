@@ -185,6 +185,9 @@ function doGet(e) {
       case "statusIndex":
         result = getStatusIndex_(e.parameter.month);
         break;
+      case "allEntries":
+        result = getAllEntries_(e.parameter.month);
+        break;
       case "whoami":
         result = whoami_(e.parameter.token);
         break;
@@ -1235,6 +1238,18 @@ function levelFor_(rawValue, parameter, jenis) {
     return 1;
   }
   return 0;
+}
+
+// Mengambil entri SEMUA sistem sekaligus dalam satu kali round-trip HTTP.
+// Dipakai untuk Pusat Notifikasi, yang sebelumnya melakukan 5 panggilan
+// terpisah (satu per sistem) — lambat karena tiap panggilan ke Apps Script
+// punya overhead cold-start tersendiri. Sekarang cukup satu panggilan.
+function getAllEntries_(month) {
+  const out = {};
+  Object.keys(SYSTEMS).forEach(function (key) {
+    out[key] = getEntries_(key, month).entries || [];
+  });
+  return { month: month, entries: out };
 }
 
 function getStatusIndex_(month) {

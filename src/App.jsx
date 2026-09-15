@@ -12,7 +12,7 @@ import {
   Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft, Download, Eye, EyeOff,
 } from "lucide-react";
 import {
-  fetchMaster, fetchEntries, saveEntries as apiSaveEntries,
+  fetchMaster, fetchEntries, fetchAllEntries, saveEntries as apiSaveEntries,
   fetchReport, saveReport as apiSaveReport, fetchStatusIndex,
   generateNarrative, approveDikaji as apiApproveDikaji,
   approveMengetahui as apiApproveMengetahui, fetchActivityLog,
@@ -2011,7 +2011,7 @@ function ReportHasilPanel({ systemKey, entriesForMonth, monthKey, session, token
         .qc-form-table-wrap { overflow-x: auto; }
         @media print {
           .qc-form-table-wrap { overflow: visible !important; width: auto !important; }
-          .qc-form-table { width: 100% !important; font-size: 7.2px !important; table-layout: fixed; }
+          .qc-form-table { width: 100% !important; font-size: 8.8px !important; table-layout: fixed; }
           .qc-form-table th, .qc-form-table td { padding: 1.5px 2px !important; overflow-wrap: break-word; }
           .qc-form-table thead { display: table-header-group; }
           .qc-form-table tr { page-break-inside: avoid; break-inside: avoid; }
@@ -2328,7 +2328,7 @@ function EntriDataRecapPrint({ system, params, entries }) {
                   {params.map((p) => {
                     const st = statusFor(e[p], p, system.jenis);
                     return (
-                      <td key={p} className={`px-2 py-1.5 text-right font-semibold whitespace-nowrap ${st.level >= 4 ? "text-red-700" : st.level >= 3 ? "text-orange-700" : st.level >= 2 ? "text-amber-700" : "text-slate-700"}`}>
+                      <td key={p} className={`px-2 py-1.5 text-right font-semibold ${st.level >= 4 ? "text-red-700" : st.level >= 3 ? "text-orange-700" : st.level >= 2 ? "text-amber-700" : "text-slate-700"}`}>
                         {displayValue(e[p])}
                       </td>
                     );
@@ -2716,9 +2716,9 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
         @media print {
           @page { size: A4 landscape; margin: 1cm; }
           .qcrecap-table-wrap { overflow: visible !important; width: auto !important; }
-          .qcrecap-table { width: 100% !important; font-size: 7px !important; table-layout: auto; }
+          .qcrecap-table { width: 100% !important; font-size: 9px !important; table-layout: auto; }
           .qcrecap-table th, .qcrecap-table td {
-            padding: 2px 3px !important;
+            padding: 2.5px 4px !important;
             white-space: normal !important;
             word-break: break-word;
             overflow-wrap: break-word;
@@ -3510,12 +3510,14 @@ function AppInner() {
       try {
         const notifList = [];
         const closedList = [];
-        await Promise.all(
-          SYSTEMS.map(async (sys) => {
-            try {
-              const entriesRes = await fetchEntries(sys.key, monthKey).catch(() => []);
-              const list = Array.isArray(entriesRes) ? entriesRes : entriesRes?.entries || [];
-              const params = PARAMS_BY_JENIS[sys.jenis] || [];
+        // Satu panggilan untuk entri SEMUA sistem, bukan 5 panggilan
+        // terpisah — jauh lebih cepat (tiap panggilan ke Apps Script
+        // punya overhead cold-start sendiri, jadi 5x lipat lebih lambat).
+        const allEntries = await fetchAllEntries(monthKey).catch(() => ({}));
+        SYSTEMS.forEach((sys) => {
+          try {
+            const list = allEntries[sys.key] || [];
+            const params = PARAMS_BY_JENIS[sys.jenis] || [];
               // Temuan dikumpulkan lewat collectFindings supaya hasil yang
               // sudah ditindaklanjuti dengan sampling ulang tidak lagi
               // dihitung sebagai alert terbuka — tapi tetap tercatat.
@@ -3555,9 +3557,8 @@ function AppInner() {
                         : `${dasar.desc} Sampling ulang ${f.ulang.tanggal}: ${f.ulang[p]} — masih belum memenuhi.`,
                 });
               });
-            } catch {}
-          })
-        );
+          } catch {}
+        });
         if (isMounted) {
           setNotifications(notifList);
           setResolvedNotifications(closedList);

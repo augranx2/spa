@@ -4,10 +4,35 @@ if (!API_URL) {
   console.warn("SPA_CONFIG.API_URL belum diisi — cek file public/config.js");
 }
 
+// Pesan error HTTP dibuat sesuai aksi yang sebenarnya gagal (login, simpan
+// data, dll) — sebelumnya semua kegagalan POST (termasuk gagal LOGIN) selalu
+// menampilkan "Gagal menyimpan data", yang membingungkan karena tidak sesuai
+// dengan apa yang sebenarnya sedang dilakukan pengguna.
+function httpErrorMessage(action, status) {
+  if (!API_URL) {
+    return "URL server (API_URL) belum diatur di public/config.js — hubungi Administrator.";
+  }
+  if (status === 404) {
+    return `Server tidak ditemukan (HTTP 404). URL Apps Script di config.js kemungkinan sudah tidak berlaku — deployment perlu dicek ulang.`;
+  }
+  const label = {
+    login: "Gagal login", logout: "Gagal keluar", master: "Gagal memuat data titik sampling",
+    entries: "Gagal memuat data pengujian", allEntries: "Gagal memuat data pengujian",
+    saveEntries: "Gagal menyimpan data pengujian", report: "Gagal memuat pengkajian",
+    saveReport: "Gagal menyimpan narasi", approveDikaji: "Gagal menyetujui",
+    approveMengetahui: "Gagal menyetujui", statusIndex: "Gagal memuat status sistem",
+    activityLog: "Gagal memuat audit trail", changePassword: "Gagal mengganti password",
+    whoami: "Gagal memuat sesi", reportHasil: "Gagal memuat Report Hasil",
+    saveReportHasil: "Gagal menyimpan Report Hasil", approveReportHasil: "Gagal menyetujui Report Hasil",
+    kontrolMingguan: "Gagal memuat Kontrol Mingguan", saveKontrolMingguan: "Gagal menyimpan Kontrol Mingguan",
+  }[action] || "Gagal terhubung ke server";
+  return `${label} (HTTP ${status})`;
+}
+
 async function apiGet(params) {
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`${API_URL}?${qs}`);
-  if (!res.ok) throw new Error(`Gagal memuat data (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(httpErrorMessage(params.action, res.status));
   const data = await res.json();
   if (data.error) throw new Error(data.error);
   return data;
@@ -24,7 +49,7 @@ async function apiPost(body) {
     method: "POST",
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Gagal menyimpan data (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(httpErrorMessage(body.action, res.status));
   const data = await res.json();
   if (data.error) throw new Error(data.error);
   return data;
@@ -36,6 +61,13 @@ export function fetchMaster(system) {
 
 export function fetchEntries(system, month) {
   return apiGet({ action: "entries", system, month }).then((d) => d.entries || []);
+}
+
+// Ambil entri SEMUA sistem dalam satu kali panggilan (dipakai Pusat
+// Notifikasi) — jauh lebih cepat daripada 5 panggilan terpisah karena tiap
+// panggilan ke Apps Script punya overhead cold-start sendiri.
+export function fetchAllEntries(month) {
+  return apiGet({ action: "allEntries", month }).then((d) => d.entries || {});
 }
 
 export function saveEntries(system, month, entries, token) {
