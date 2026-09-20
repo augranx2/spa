@@ -1,3 +1,4 @@
+import { ssoAktif, ssoCall, keGantiPasswordPortal } from "./sso.js";
 const API_URL = window.SPA_CONFIG?.API_URL || "";
 
 if (!API_URL) {
@@ -30,6 +31,7 @@ function httpErrorMessage(action, status) {
 }
 
 async function apiGet(params) {
+  if (ssoAktif()) return ssoCall("GET", params);
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`${API_URL}?${qs}`);
   if (!res.ok) throw new Error(httpErrorMessage(params.action, res.status));
@@ -39,6 +41,7 @@ async function apiGet(params) {
 }
 
 async function apiPost(body) {
+  if (ssoAktif()) return ssoCall("POST", body);
   // PENTING: jangan set header "Content-Type: application/json" di sini.
   // Kalau di-set, browser akan mengirim "preflight" request (OPTIONS) lebih
   // dulu, dan Google Apps Script web app tidak bisa menjawab preflight itu,
@@ -111,6 +114,11 @@ export function logout(token) {
 }
 
 export function changePassword(oldPassword, newPassword, token) {
+  // Saat login lewat portal aktif, password dikelola di Portal REMS.
+  if (ssoAktif()) {
+    keGantiPasswordPortal();
+    return new Promise(() => {});
+  }
   return apiPost({ action: "changePassword", oldPassword, newPassword, token });
 }
 

@@ -170,6 +170,8 @@ const ROLE_LEVEL = { Tamu: 1, Staff: 2, Supervisor: 3, Manager: 4, "Assistant Ma
 
 function doGet(e) {
   try {
+    const ssoTolak = ssoMasuk_(e.parameter || {});
+    if (ssoTolak) return jsonOut_(ssoTolak);
     const action = e.parameter.action;
     let result;
     switch (action) {
@@ -212,6 +214,8 @@ function doGet(e) {
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
+    const ssoTolak = ssoMasuk_(body);
+    if (ssoTolak) return jsonOut_(ssoTolak);
     let result;
     switch (body.action) {
       case "login":
@@ -454,6 +458,7 @@ function logout_(token) {
 
 // Sessions kolom: A Token | B Username | C Nama | D Role | E Departemen | F LoginAt | G ExpiresAt
 function validateSession_(token) {
+  if (SSO_SESSION_ && String(token) === "sso") return SSO_SESSION_;
   if (!token) return null;
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SESSIONS_SHEET);
   if (!sheet) return null;
@@ -1332,4 +1337,42 @@ function safeParseJSON_(text) {
   } catch (e) {
     return null;
   }
+}
+
+// ===========================================================================
+// LOGIN LEWAT PORTAL REMS (SSO)
+// ---------------------------------------------------------------------------
+// Saat SSO aktif, website memanggil Apps Script lewat perantara di Vercel
+// (/api/gas). Perantara itu menyertakan kunci rahasia (ssoKey) dan identitas
+// user dari portal (ssoUser). Identitas hanya dipercaya bila ssoKey cocok
+// dengan Script Property SSO_PROXY_KEY.
+//
+// Script Properties (Project Settings > Script Properties):
+//   SSO_PROXY_KEY  sama dengan GAS_SSO_KEY di Vercel. Kosong = SSO tidak dipakai.
+//   SSO_WAJIB      "true" = semua akses langsung (tanpa perantara) ditolak.
+//                  Nyalakan hanya setelah SSO di website sudah aktif & lancar.
+// ===========================================================================
+var SSO_SESSION_ = null;
+
+function ssoMasuk_(p) {
+  SSO_SESSION_ = null;
+  var props = PropertiesService.getScriptProperties();
+  var kunci = props.getProperty("SSO_PROXY_KEY") || "";
+  var wajib = String(props.getProperty("SSO_WAJIB") || "").toLowerCase() === "true";
+  var cocok = kunci.length >= 16 && p && String(p.ssoKey || "") === kunci;
+  if (!cocok) {
+    if (wajib) return { error: "Akses langsung ditutup. Buka aplikasi lewat alamat resminya.", needLogin: true };
+    return null;
+  }
+  if (p.ssoUser) {
+    var u = JSON.parse(p.ssoUser);
+    SSO_SESSION_ = {
+      token: "sso",
+      username: String(u.username || ""),
+      nama: String(u.nama || u.username || ""),
+      role: String(u.role || "").trim(),
+      departemen: String(u.departemen || "").trim(),
+    };
+  }
+  return null;
 }
