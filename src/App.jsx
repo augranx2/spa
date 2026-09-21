@@ -1,3 +1,4 @@
+import { ssoAktif, ssoState } from "./sso.js";
 import React, { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
@@ -1559,6 +1560,15 @@ function HeaderBar({
                   <p className="text-[9px] text-teal-600 font-normal">{session?.role || "User"}</p>
                 </div>
               </button>
+                            {ssoAktif() && (
+                <a
+                  href={ssoState().portalUrl || "https://portal.myrama.id"}
+                  className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-blue-50 hover:border-blue-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-blue-700 transition"
+                  title="Kembali ke Portal REMS"
+                >
+                  ⌂ Portal
+                </a>
+              )}
               <button
                 onClick={onLogout}
                 className="p-2 rounded-xl border border-teal-200 text-teal-700 hover:bg-red-50 hover:text-red-700 transition"
