@@ -35,17 +35,33 @@ export function keGantiPasswordPortal() {
   window.location.href = `${state.portalUrl}/ganti-password?next=${kembali()}`;
 }
 
+// Apps Script kadang gagal SESAAT di bawah beban (lihat catatan yang sama
+// di api.js) — /api/gas meneruskan kegagalan itu sebagai HTTP 502. Retry
+// singkat di sini membuat jalur SSO sama tahan bantingnya dengan jalur lama.
+const SSO_RETRYABLE = new Set([404, 500, 502, 503, 504]);
+const SSO_MAX_RETRIES = 2;
+
 /** Semua panggilan data saat SSO aktif lewat /api/gas (perantara di Vercel). */
 export async function ssoCall(method, params) {
-  const res =
-    method === "GET"
-      ? await fetch(`/api/gas?${new URLSearchParams(params).toString()}`, { credentials: "same-origin" })
-      : await fetch("/api/gas", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(params),
-        });
+  let res;
+  for (let attempt = 0; attempt <= SSO_MAX_RETRIES; attempt++) {
+    try {
+      res =
+        method === "GET"
+          ? await fetch(`/api/gas?${new URLSearchParams(params).toString()}`, { credentials: "same-origin" })
+          : await fetch("/api/gas", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(params),
+            });
+      if (res.ok || !SSO_RETRYABLE.has(res.status) || attempt === SSO_MAX_RETRIES) break;
+    } catch (err) {
+      if (attempt === SSO_MAX_RETRIES) throw new Error(`Tidak bisa terhubung ke server: ${err.message}`);
+      res = null;
+    }
+    await new Promise((r) => setTimeout(r, 500 + attempt * 700));
+  }
   let data;
   try {
     data = await res.json();

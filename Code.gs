@@ -190,6 +190,9 @@ function doGet(e) {
       case "allEntries":
         result = getAllEntries_(e.parameter.month);
         break;
+      case "systemDetail":
+        result = getSystemDetailBundle_(e.parameter.system, e.parameter.month);
+        break;
       case "whoami":
         result = whoami_(e.parameter.token);
         break;
@@ -1249,6 +1252,23 @@ function levelFor_(rawValue, parameter, jenis) {
 // Dipakai untuk Pusat Notifikasi, yang sebelumnya melakukan 5 panggilan
 // terpisah (satu per sistem) — lambat karena tiap panggilan ke Apps Script
 // punya overhead cold-start tersendiri. Sekarang cukup satu panggilan.
+// Membundel 5 permintaan yang SELALU dipakai bersamaan saat membuka satu
+// sistem (entries, report, master titik sampling, kontrol mingguan, report
+// hasil QC) menjadi SATU kali round-trip HTTP. Sebelumnya frontend mengirim
+// 5 permintaan paralel terpisah setiap kali buka satu sistem — ini yang
+// membuat Apps Script terasa lambat/kadang gagal, karena tiap permintaan
+// punya overhead eksekusi tersendiri dan Apps Script punya batas eksekusi
+// bersamaan per akun.
+function getSystemDetailBundle_(systemKey, month) {
+  return {
+    entries: getEntries_(systemKey, month),
+    report: getReport_(systemKey, month),
+    master: getMaster_(systemKey),
+    kontrolMingguan: getKontrolMingguan_(),
+    reportHasil: getReportHasil_(systemKey, month),
+  };
+}
+
 function getAllEntries_(month) {
   const out = {};
   Object.keys(SYSTEMS).forEach(function (key) {

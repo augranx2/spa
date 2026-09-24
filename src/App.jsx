@@ -13,7 +13,7 @@ import {
   Bell, AlertOctagon, Clock, CheckCheck, FileCheck2, KeyRound, ShieldCheck, Menu, X, ChevronDown, ArrowLeft, Download, Eye, EyeOff,
 } from "lucide-react";
 import {
-  fetchMaster, fetchEntries, fetchAllEntries, saveEntries as apiSaveEntries,
+  fetchMaster, fetchEntries, fetchAllEntries, fetchSystemDetail, saveEntries as apiSaveEntries,
   fetchReport, saveReport as apiSaveReport, fetchStatusIndex,
   generateNarrative, approveDikaji as apiApproveDikaji,
   approveMengetahui as apiApproveMengetahui, fetchActivityLog,
@@ -537,7 +537,7 @@ function ParamChart({ entries, paramKey, systemLabel, jenis }) {
 
   return (
     <div className="avoid-break overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-b border-slate-100 px-4 py-2.5 bg-slate-50/50">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-b border-slate-100 px-4 py-2.5 bg-slate-50">
         <div>
           <p className="text-xs font-bold text-slate-700">{meta.label} — {systemLabel}</p>
           <p className="text-[11px] text-slate-400">
@@ -671,7 +671,7 @@ function ParamValueTable({ entries, paramKey, jenis }) {
               const tindakStatus = tindak ? statusFor(tindak[paramKey], paramKey, jenis) : null;
               const ditutup = tindak && tindakStatus.level < 3 && String(tindak.catatanTindakLanjut || "").trim();
               return (
-                <tr key={e.id} className={`border-b border-slate-100 last:border-0 hover:bg-slate-50/50 ${ulang ? "bg-sky-50/40" : ""}`}>
+                <tr key={e.id} className={`border-b border-slate-100 last:border-0 hover:bg-slate-50/50 ${ulang ? "bg-sky-50" : ""}`}>
                   <td className="whitespace-nowrap px-4 py-2 font-semibold text-slate-800">
                     {e.titikSampling || "-"}
                     {ulang && <span className="ml-1.5 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800">ULANG</span>}
@@ -2305,6 +2305,17 @@ function ParamHeaderCell({ paramKey }) {
   );
 }
 
+// Warna nilai di rekap cetak mengikuti legenda yang sama dengan seluruh
+// aplikasi: hijau = terkendali, kuning = Alert, oranye = Action, merah =
+// melebihi Syarat, abu-abu = belum ada data.
+const RECAP_VALUE_CLASS = {
+  0: "text-slate-400",
+  1: "bg-emerald-50 text-emerald-700",
+  2: "bg-amber-50 text-amber-700",
+  3: "bg-orange-50 text-orange-700",
+  4: "bg-red-50 text-red-700",
+};
+
 function EntriDataRecapPrint({ system, params, entries }) {
   if (!entries || entries.length === 0) return null;
   const rows = entries.slice().sort((a, b) => {
@@ -2312,17 +2323,32 @@ function EntriDataRecapPrint({ system, params, entries }) {
     if (byDate !== 0) return byDate;
     return String(a.titikSampling || "").localeCompare(String(b.titikSampling || ""));
   });
+  // Lebar kolom TETAP lewat colgroup (bukan dibiarkan auto) supaya tidak ada
+  // jeda kosong tak terduga antar header — total metadata 38%, sisanya
+  // dibagi rata ke semua kolom parameter.
+  const metaWidths = [7, 6, 9, 16];
+  const paramWidth = (100 - metaWidths.reduce((a, b) => a + b, 0)) / Math.max(params.length, 1);
   return (
-    <div className="only-print rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
+    // TIDAK memakai "print-card" di sini secara sendirian — kartu ini bisa
+    // sangat panjang (puluhan baris), jadi "page-break-inside: avoid" pada
+    // print-card justru mendorong SELURUH kartu ke halaman berikutnya dan
+    // menyisakan halaman sebelumnya kosong. "qcrecap-allow-break" membatalkan
+    // itu khusus untuk kartu ini, supaya tabel boleh terpotong wajar antar
+    // halaman (baris tunggal tetap tidak terpotong, lihat style di bawah).
+    <div className="only-print qcrecap-allow-break rounded-3xl border border-slate-200/80 bg-white p-5 print-card shadow-xs">
       <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-700">Rekap Entri Data Pengujian (QC)</h3>
       <div className="overflow-x-auto qcrecap-table-wrap">
         <table className="w-full text-[10.5px] qcrecap-table">
+          <colgroup>
+            {metaWidths.map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}
+            {params.map((p) => <col key={p} style={{ width: `${paramWidth}%` }} />)}
+          </colgroup>
           <thead>
             <tr className="border-b border-slate-200 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50">
-              <th className="px-2 py-1.5 w-16">Tanggal</th>
-              <th className="px-2 py-1.5 w-14">Jenis</th>
-              <th className="px-2 py-1.5 w-20">Titik Sampling</th>
-              <th className="px-2 py-1.5 w-28">Nama Ruangan</th>
+              <th className="px-2 py-1.5">Tanggal</th>
+              <th className="px-2 py-1.5">Jenis</th>
+              <th className="px-2 py-1.5">Titik Sampling</th>
+              <th className="px-2 py-1.5">Nama Ruangan</th>
               {params.map((p) => <ParamHeaderCell key={p} paramKey={p} />)}
             </tr>
           </thead>
@@ -2330,7 +2356,7 @@ function EntriDataRecapPrint({ system, params, entries }) {
             {rows.map((e) => {
               const ulang = isResampleEntry(e);
               return (
-                <tr key={e.id} className={`border-b border-slate-100 last:border-0 ${ulang ? "bg-sky-50/40" : ""}`}>
+                <tr key={e.id} className={`border-b border-slate-100 last:border-0 ${ulang ? "bg-sky-50" : ""}`}>
                   <td className="px-2 py-1.5">{isoToID(e.tanggal)}</td>
                   <td className="px-2 py-1.5">{ulang ? `Ulang${e.refTanggal ? ` (ref ${isoToID(e.refTanggal)})` : ""}` : "Rutin"}</td>
                   <td className="px-2 py-1.5 font-semibold text-slate-800">{e.titikSampling || "-"}</td>
@@ -2338,7 +2364,7 @@ function EntriDataRecapPrint({ system, params, entries }) {
                   {params.map((p) => {
                     const st = statusFor(e[p], p, system.jenis);
                     return (
-                      <td key={p} className={`px-2 py-1.5 text-right font-semibold ${st.level >= 4 ? "text-red-700" : st.level >= 3 ? "text-orange-700" : st.level >= 2 ? "text-amber-700" : "text-slate-700"}`}>
+                      <td key={p} className={`px-2 py-1.5 text-right font-semibold ${RECAP_VALUE_CLASS[st.level] || RECAP_VALUE_CLASS[0]}`}>
                         {displayValue(e[p])}
                       </td>
                     );
@@ -2348,6 +2374,7 @@ function EntriDataRecapPrint({ system, params, entries }) {
             })}
           </tbody>
         </table>
+
       </div>
       <p className="mt-2.5 text-[10px] text-slate-400">Total {rows.length} baris data. Nilai berwarna menandakan status terhadap Alert/Action Limit — lihat Persyaratan Mutu di bawah.</p>
     </div>
@@ -2468,14 +2495,16 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
       setLoading(true);
       setLoadError("");
       try {
-        const [ent, rep, pts, kontrol, rh] = await Promise.all([
-          fetchEntries(systemKey, monthKey),
-          fetchReport(systemKey, monthKey),
-          fetchMaster(systemKey),
-          fetchKontrolMingguan().catch(() => []),
-          fetchReportHasil(systemKey, monthKey).catch(() => null),
-        ]);
+        // Satu panggilan gabungan (bukan 5 panggilan terpisah) — jauh lebih
+        // cepat dan lebih tahan terhadap Apps Script yang lambat/di bawah
+        // beban, karena hanya 1 eksekusi server yang perlu ditunggu.
+        const bundle = await fetchSystemDetail(systemKey, monthKey);
         if (cancelled) return;
+        const ent = bundle.entries?.entries || [];
+        const rep = bundle.report || { found: false };
+        const pts = bundle.master?.points || [];
+        const kontrol = bundle.kontrolMingguan?.records || [];
+        const rh = bundle.reportHasil || null;
         setEntries(ent.map((e) => ({ ...e, id: e.id || uid() })));
         setMasterPoints(pts);
         setKontrolRecords(kontrol);
@@ -2723,10 +2752,15 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
     <div className="space-y-6" data-print-blocked={!canPrint}>
       <style>{`
         .qcrecap-table-wrap { overflow-x: auto; }
+        /* Kartu rekap boleh terpotong antar halaman (isinya bisa puluhan
+           baris) — membatalkan "page-break-inside: avoid" dari .print-card
+           yang sebelumnya membuat seluruh kartu terdorong ke halaman
+           berikutnya dan menyisakan halaman sebelumnya kosong. */
+        .qcrecap-allow-break.print-card { page-break-inside: auto !important; break-inside: auto !important; }
         @media print {
           @page { size: A4 landscape; margin: 1cm; }
           .qcrecap-table-wrap { overflow: visible !important; width: auto !important; }
-          .qcrecap-table { width: 100% !important; font-size: 9px !important; table-layout: auto; }
+          .qcrecap-table { width: 100% !important; font-size: 9.5px !important; table-layout: fixed; }
           .qcrecap-table th, .qcrecap-table td {
             padding: 2.5px 4px !important;
             white-space: normal !important;
@@ -2872,7 +2906,7 @@ function SystemDetail({ systemKey, monthKey, setMonthKey, onBack, onSaved, sessi
               <div key={p} className="overflow-hidden rounded-3xl border border-slate-200 bg-white print-card shadow-xs">
                 <div className="p-4"><ParamValueTable entries={entries} paramKey={p} jenis={system.jenis} /></div>
                 {!getLimit(p, system.jenis).qualitative && <div className="px-4 pb-4"><ParamChart entries={entries} paramKey={p} systemLabel={system.label} jenis={system.jenis} /></div>}
-                <div className="border-t border-slate-100 p-4 avoid-break bg-slate-50/40">
+                <div className="border-t border-slate-100 p-4 avoid-break bg-slate-50">
                   <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-700">
                     Hasil &amp; Tren {PARAM_META[p].short}
                   </label>

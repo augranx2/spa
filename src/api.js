@@ -30,10 +30,48 @@ function httpErrorMessage(action, status) {
   return `${label} (HTTP ${status})`;
 }
 
+// Apps Script Web App kadang gagal SESAAT (404/500/502/503, atau timeout)
+// di bawah beban — bukan berarti deployment-nya benar-benar mati. Daripada
+// langsung menampilkan error ke pengguna, coba ulang beberapa kali dengan
+// jeda singkat lebih dulu; ini menghilangkan sebagian besar kegagalan yang
+// terasa "app script kadang gak berlaku" padahal sebenarnya cuma lambat.
+const RETRYABLE_STATUS = new Set([404, 408, 429, 500, 502, 503, 504]);
+const REQUEST_TIMEOUT_MS = 20000;
+const MAX_RETRIES = 2; // total percobaan = 3x
+
+async function fetchWithRetry(url, options, actionLabel) {
+  let lastErr;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok || !RETRYABLE_STATUS.has(res.status) || attempt === MAX_RETRIES) {
+        return res;
+      }
+      console.warn(`[SPA] ${actionLabel || "request"} gagal (HTTP ${res.status}), mencoba lagi (${attempt + 1}/${MAX_RETRIES})...`);
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt === MAX_RETRIES) {
+        throw new Error(
+          err.name === "AbortError"
+            ? "Server tidak merespons (timeout). Koneksi ke Apps Script lambat atau terputus — coba lagi."
+            : `Tidak bisa terhubung ke server: ${err.message}`
+        );
+      }
+      console.warn(`[SPA] ${actionLabel || "request"} gagal terhubung, mencoba lagi (${attempt + 1}/${MAX_RETRIES})...`);
+    }
+    await new Promise((r) => setTimeout(r, 500 + attempt * 700));
+  }
+  throw lastErr || new Error("Gagal terhubung ke server.");
+}
+
 async function apiGet(params) {
   if (ssoAktif()) return ssoCall("GET", params);
   const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${API_URL}?${qs}`);
+  const res = await fetchWithRetry(`${API_URL}?${qs}`, {}, params.action);
   if (!res.ok) throw new Error(httpErrorMessage(params.action, res.status));
   const data = await res.json();
   if (data.error) throw new Error(data.error);
@@ -48,10 +86,7 @@ async function apiPost(body) {
   // sehingga permintaan akan gagal karena CORS. Membiarkan body sebagai
   // string tanpa header khusus membuat browser mengirimnya sebagai
   // "simple request" yang langsung diterima Apps Script.
-  const res = await fetch(API_URL, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  const res = await fetchWithRetry(API_URL, { method: "POST", body: JSON.stringify(body) }, body.action);
   if (!res.ok) throw new Error(httpErrorMessage(body.action, res.status));
   const data = await res.json();
   if (data.error) throw new Error(data.error);
@@ -71,6 +106,14 @@ export function fetchEntries(system, month) {
 // panggilan ke Apps Script punya overhead cold-start sendiri.
 export function fetchAllEntries(month) {
   return apiGet({ action: "allEntries", month }).then((d) => d.entries || {});
+}
+
+// Satu panggilan gabungan untuk semua yang dibutuhkan saat membuka satu
+// sistem (entries + report + master + kontrol mingguan + report hasil),
+// menggantikan 5 panggilan paralel terpisah — jauh lebih ringan buat Apps
+// Script dan jauh lebih cepat dirasakan pengguna.
+export function fetchSystemDetail(system, month) {
+  return apiGet({ action: "systemDetail", system, month });
 }
 
 export function saveEntries(system, month, entries, token) {
